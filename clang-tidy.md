@@ -33,7 +33,6 @@ These are coding guidelines we do not follow. Some of the checks might be explic
 
 `readability-braces-around-statements`<br/>
 `readability-isolate-declaration`<br/>
-`modernize-use-trailing-return-type`<br/>
 `readability-uppercase-literal-suffix`<br/>
 `readability-identifier-length`<br/>
 
@@ -112,21 +111,29 @@ Also reports a false positive about templates which deduce the array length: htt
 
 `misc-include-cleaner`<br/>
 
-We run this separately via `clang-include-cleaner` in the `iwyu.yml` workflow as the findings of the include checkers still need to be reviewed manually before applying them. 
+We run this separately via `clang-include-cleaner` in the `iwyu.yml` workflow as the findings of the include checkers still need to be reviewed manually before applying them.
+
+`readability-use-concise-preprocessor-directives`<br/>
+
+Does not improve the readability.
 
 `bugprone-branch-clone`<br/>
 `modernize-return-braced-init-list`<br/>
 `misc-throw-by-value-catch-by-reference`<br/>
-`readability-avoid-const-params-in-decls`<br/>
 `bugprone-signed-char-misuse`<br/>
 `concurrency-mt-unsafe`<br/>
 `misc-use-anonymous-namespace`<br/>
 `performance-avoid-endl`<br/>
-`performance-noexcept-swap`<br/>
 `bugprone-switch-missing-default-case`<br/>
 `bugprone-empty-catch`<br/>
-`performance-enum-size`<br/>
-`readability-avoid-nested-conditional-operator`</br>
+`readability-avoid-nested-conditional-operator`<br/>
+`modernize-use-designated-initializers`<br/>
+`readability-enum-initial-value`<br/>
+`modernize-use-trailing-return-type`<br/>
+`misc-unconventional-assign-operator`<br/>
+`bugprone-throwing-static-initialization`<br/>
+`bugprone-command-processor`<br/>
+`misc-multiple-inheritance`<br/>
 
 To be evaluated (need to remove exclusion).
 
@@ -134,7 +141,6 @@ To be evaluated (need to remove exclusion).
 `cppcoreguidelines-avoid-const-or-ref-data-members`<br/>
 `cppcoreguidelines-macro-usage`<br/>
 `cppcoreguidelines-pro-type-member-init`<br/>
-`cppcoreguidelines-pro-type-static-cast-downcast`<br/>
 `cppcoreguidelines-prefer-member-initializer`<br/>
 `cppcoreguidelines-misleading-capture-default-by-value`<br/>
 `bugprone-argument-comment.CommentBoolLiterals`<br/>
@@ -144,14 +150,31 @@ To be evaluated (need to remove exclusion).
 
 To be evaluated (need to enable explicitly).
 
-`modernize-type-traits`</br>
-`modernize-use-nodiscard`</br>
+`modernize-type-traits`<br/>
+`modernize-use-nodiscard`<br/>
+`modernize-use-scoped-lock`<br/>
 
 These apply to codebases which use later standards then C++11 (C++17 is used when building with Qt6) so we cannot simply apply them.
 
-`modernize-use-auto`<br/>
+`portability-avoid-pragma-once`<br/>
 
-This cannot be enabled as it might lead to changes in the constness of iterators - see https://github.com/llvm/llvm-project/issues/84324.
+We are not interested in this.
+
+`readability-redundant-parentheses`<br/>
+
+Reports false positives - see https://github.com/llvm/llvm-project/issues/164125.
+
+`readability-inconsistent-ifelse-braces`<br/>
+
+The suggestions are too intrusive.
+
+`modernize-avoid-c-style-cast`<br/>
+
+Currently flags functional casts - see https://github.com/llvm/llvm-project/issues/186784.
+
+`misc-use-internal-linkage.AnalyzeTypes`<br/>
+
+Adding anonymous namespaces requires identation which is too instrusive right now. Would require changes to our fomatting configuration.
 
 ### Disabled for performance reasons
 
@@ -177,7 +200,7 @@ We are currently using our own `naming.json` to enforce naming schemes. Also dis
 
 `portability-simd-intrinsics`<br/>
 
-We are not using SIMD instructions and it suggests to use `std::experiemental::` features which might not be commonly available. Also disabled for performance reasons - see https://github.com/llvm/llvm-project/issues/57527#issuecomment-1237935132.
+We are not using SIMD instructions and it suggests to use `std::experimental::` features which might not be commonly available. Also disabled for performance reasons - see https://github.com/llvm/llvm-project/issues/57527#issuecomment-1237935132.
 
 `modernize-macro-to-enum`<br/>
 

@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2021 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,9 +48,13 @@ private:
     static void loadCfgFile(const QString &filename, CppcheckLibraryData &data, QString &res, bool removeFile = false);
     static void saveCfgFile(const QString &filename, CppcheckLibraryData &data);
 
+    // cppcheck-suppress naming-privateMemberVariable - TODO: fix this
     CppcheckLibraryData libraryData;
+    // cppcheck-suppress naming-privateMemberVariable - TODO: fix this
     CppcheckLibraryData fileLibraryData;
+    // cppcheck-suppress naming-privateMemberVariable - TODO: fix this
     QString result;
 
+    // cppcheck-suppress naming-privateMemberVariable - TODO: fix this
     static const QString TempCfgFile;
 };

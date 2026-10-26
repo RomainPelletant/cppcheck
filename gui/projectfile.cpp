@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
 
 #include <utility>
 
+#include <QCoreApplication>
 #include <QFile>
 #include <QDir>
 #include <QIODevice>
@@ -34,10 +35,6 @@
 #include <QXmlStreamAttributes>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
-
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-#include <QStringRef>
-#endif
 
 ProjectFile *ProjectFile::mActiveProject;
 
@@ -66,6 +63,7 @@ void ProjectFile::clear()
     mIncludeDirs.clear();
     mDefines.clear();
     mUndefines.clear();
+    mUserInclude.clear();
     mPaths.clear();
     mExcludedPaths.clear();
     mLibraries.clear();
@@ -74,9 +72,10 @@ void ProjectFile::clear()
     mSuppressions.clear();
     mAddons.clear();
     mClangAnalyzer = mClangTidy = false;
-    mAnalyzeAllVsConfigs = false;
+    mAnalyzeAllVsConfigs = false; // TODO: defaults to true if loading a GUI project via CLI
     mCheckHeaders = true;
     mCheckUnusedTemplates = true;
+    mInlineSuppression = true;
     mMaxCtuDepth = settings.maxCtuDepth;
     mMaxTemplateRecursion = settings.maxTemplateRecursion;
     mCheckUnknownFunctionReturn.clear();
@@ -143,8 +142,17 @@ bool ProjectFile::read(const QString &filename)
             if (xmlReader.name() == QString(CppcheckXml::CheckUnusedTemplatesElementName))
                 mCheckUnusedTemplates = readBool(xmlReader);
 
+            if (xmlReader.name() == QString(CppcheckXml::InlineSuppression))
+                mInlineSuppression = readBool(xmlReader);
+
             if (xmlReader.name() == QString(CppcheckXml::CheckLevelExhaustiveElementName))
                 mCheckLevel = CheckLevel::exhaustive;
+
+            if (xmlReader.name() == QString(CppcheckXml::CheckLevelNormalElementName))
+                mCheckLevel = CheckLevel::normal;
+
+            if (xmlReader.name() == QString(CppcheckXml::CheckLevelReducedElementName))
+                mCheckLevel = CheckLevel::reduced;
 
             // Find include directory from inside project element
             if (xmlReader.name() == QString(CppcheckXml::IncludeDirElementName))
@@ -157,6 +165,9 @@ bool ProjectFile::read(const QString &filename)
             // Find preprocessor define from inside project element
             if (xmlReader.name() == QString(CppcheckXml::UndefinesElementName))
                 readStringList(mUndefines, xmlReader, CppcheckXml::UndefineName);
+
+            if (xmlReader.name() == QString(CppcheckXml::UserIncludeElementName))
+                mUserInclude = readString(xmlReader);
 
             // Find exclude list from inside project element
             if (xmlReader.name() == QString(CppcheckXml::ExcludeElementName))
@@ -337,15 +348,13 @@ bool ProjectFile::readBool(QXmlStreamReader &reader)
 
 int ProjectFile::readInt(QXmlStreamReader &reader, int defaultValue)
 {
-    int ret = defaultValue;
     do {
         const QXmlStreamReader::TokenType type = reader.readNext();
         switch (type) {
         case QXmlStreamReader::Characters:
-            ret = reader.text().toString().toInt();
-            FALLTHROUGH;
+            return reader.text().toString().toInt();
         case QXmlStreamReader::EndElement:
-            return ret;
+            return defaultValue;
         // Not handled
         case QXmlStreamReader::StartElement:
         case QXmlStreamReader::NoToken:
@@ -363,15 +372,13 @@ int ProjectFile::readInt(QXmlStreamReader &reader, int defaultValue)
 
 QString ProjectFile::readString(QXmlStreamReader &reader)
 {
-    QString ret;
     do {
         const QXmlStreamReader::TokenType type = reader.readNext();
         switch (type) {
         case QXmlStreamReader::Characters:
-            ret = reader.text().toString();
-            FALLTHROUGH;
+            return reader.text().toString();
         case QXmlStreamReader::EndElement:
-            return ret;
+            return {};
         // Not handled
         case QXmlStreamReader::StartElement:
         case QXmlStreamReader::NoToken:
@@ -797,11 +804,6 @@ void ProjectFile::setCheckLevel(ProjectFile::CheckLevel checkLevel)
     mCheckLevel = checkLevel;
 }
 
-bool ProjectFile::isCheckLevelExhaustive() const
-{
-    return mCheckLevel == CheckLevel::exhaustive;
-}
-
 void ProjectFile::setWarningTags(std::size_t hash, const QString& tags)
 {
     if (tags.isEmpty())
@@ -873,6 +875,10 @@ bool ProjectFile::write(const QString &filename)
     xmlWriter.writeCharacters(bool_to_string(mCheckUnusedTemplates));
     xmlWriter.writeEndElement();
 
+    xmlWriter.writeStartElement(CppcheckXml::InlineSuppression);
+    xmlWriter.writeCharacters(bool_to_string(mInlineSuppression));
+    xmlWriter.writeEndElement();
+
     xmlWriter.writeStartElement(CppcheckXml::MaxCtuDepthElementName);
     xmlWriter.writeCharacters(QString::number(mMaxCtuDepth));
     xmlWriter.writeEndElement();
@@ -883,7 +889,7 @@ bool ProjectFile::write(const QString &filename)
 
     if (!mIncludeDirs.isEmpty()) {
         xmlWriter.writeStartElement(CppcheckXml::IncludeDirElementName);
-        for (const QString& incdir : mIncludeDirs) {
+        for (const QString& incdir : utils::as_const(mIncludeDirs)) {
             xmlWriter.writeStartElement(CppcheckXml::DirElementName);
             xmlWriter.writeAttribute(CppcheckXml::DirNameAttrib, incdir);
             xmlWriter.writeEndElement();
@@ -893,11 +899,17 @@ bool ProjectFile::write(const QString &filename)
 
     if (!mDefines.isEmpty()) {
         xmlWriter.writeStartElement(CppcheckXml::DefinesElementName);
-        for (const QString& define : mDefines) {
+        for (const QString& define : utils::as_const(mDefines)) {
             xmlWriter.writeStartElement(CppcheckXml::DefineName);
             xmlWriter.writeAttribute(CppcheckXml::DefineNameAttrib, define);
             xmlWriter.writeEndElement();
         }
+        xmlWriter.writeEndElement();
+    }
+
+    if (!mUserInclude.isEmpty()) {
+        xmlWriter.writeStartElement(CppcheckXml::UserIncludeElementName);
+        xmlWriter.writeCharacters(mUserInclude);
         xmlWriter.writeEndElement();
     }
 
@@ -915,7 +927,7 @@ bool ProjectFile::write(const QString &filename)
 
     if (!mPaths.isEmpty()) {
         xmlWriter.writeStartElement(CppcheckXml::PathsElementName);
-        for (const QString& path : mPaths) {
+        for (const QString& path : utils::as_const(mPaths)) {
             xmlWriter.writeStartElement(CppcheckXml::PathName);
             xmlWriter.writeAttribute(CppcheckXml::PathNameAttrib, path);
             xmlWriter.writeEndElement();
@@ -925,7 +937,7 @@ bool ProjectFile::write(const QString &filename)
 
     if (!mExcludedPaths.isEmpty()) {
         xmlWriter.writeStartElement(CppcheckXml::ExcludeElementName);
-        for (const QString& path : mExcludedPaths) {
+        for (const QString& path : utils::as_const(mExcludedPaths)) {
             xmlWriter.writeStartElement(CppcheckXml::ExcludePathName);
             xmlWriter.writeAttribute(CppcheckXml::ExcludePathNameAttrib, path);
             xmlWriter.writeEndElement();
@@ -940,7 +952,7 @@ bool ProjectFile::write(const QString &filename)
 
     if (!mSuppressions.isEmpty()) {
         xmlWriter.writeStartElement(CppcheckXml::SuppressionsElementName);
-        for (const SuppressionList::Suppression &suppression : mSuppressions) {
+        for (const SuppressionList::Suppression &suppression : utils::as_const(mSuppressions)) {
             xmlWriter.writeStartElement(CppcheckXml::SuppressionElementName);
             if (!suppression.fileName.empty())
                 xmlWriter.writeAttribute("fileName", QString::fromStdString(suppression.fileName));
@@ -1000,9 +1012,19 @@ bool ProjectFile::write(const QString &filename)
         }
     }
 
-    if (mCheckLevel == CheckLevel::exhaustive) {
+    switch (mCheckLevel) {
+    case CheckLevel::reduced:
+        xmlWriter.writeStartElement(CppcheckXml::CheckLevelReducedElementName);
+        xmlWriter.writeEndElement();
+        break;
+    case CheckLevel::normal:
+        xmlWriter.writeStartElement(CppcheckXml::CheckLevelNormalElementName);
+        xmlWriter.writeEndElement();
+        break;
+    case CheckLevel::exhaustive:
         xmlWriter.writeStartElement(CppcheckXml::CheckLevelExhaustiveElementName);
         xmlWriter.writeEndElement();
+        break;
     }
 
     // Cppcheck Premium
@@ -1045,6 +1067,12 @@ void ProjectFile::writeStringList(QXmlStreamWriter &xmlWriter, const QStringList
         xmlWriter.writeEndElement();
     }
     xmlWriter.writeEndElement();
+}
+
+void ProjectFile::setSettingsUserIncludes(Settings &settings) const
+{
+    if (!mUserInclude.isEmpty())
+        settings.userIncludes.push_back(mUserInclude.toStdString());
 }
 
 QStringList ProjectFile::fromNativeSeparators(const QStringList &paths)
@@ -1144,11 +1172,40 @@ QString ProjectFile::getAddonFilePath(QString filesDir, const QString &addon)
 #endif
     ;
 
-    for (const QString& path : searchPaths) {
+    for (const QString& path : utils::as_const(searchPaths)) {
         QString f = path + addon + ".py";
         if (QFile(f).exists())
             return f;
     }
 
     return QString();
+}
+
+QStringList ProjectFile::getSearchPaths(const QString& projectPath, const QString& appPath, const QString& datadir, const QString& dir) {
+    QStringList ret;
+    ret << appPath << (appPath + "/" + dir) << projectPath;
+#ifdef FILESDIR
+    if (FILESDIR[0])
+        ret << FILESDIR << (FILESDIR "/" + dir);
+#endif
+    if (!datadir.isEmpty())
+        ret << datadir << (datadir + "/" + dir);
+    return ret;
+}
+
+QString ProjectFile::getRelativePath(const QString &absolutePath) const
+{
+    const QDir dir(QFileInfo(mFilename).absolutePath());
+    const QString relativePath(dir.relativeFilePath(absolutePath));
+    if (relativePath.startsWith("../../..") || absolutePath.length() < relativePath.length())
+        return absolutePath;
+    return relativePath;
+}
+
+QStringList ProjectFile::getSearchPaths(const QString& dir) const {
+    const QFileInfo inf(mFilename);
+    const QString applicationFilePath = QCoreApplication::applicationFilePath();
+    const QString appPath = QFileInfo(applicationFilePath).canonicalPath();
+    const QString datadir = getDataDir();
+    return getSearchPaths(inf.canonicalPath(), appPath, datadir, dir);
 }

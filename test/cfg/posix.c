@@ -2,14 +2,15 @@
 // Test library configuration for posix.cfg
 //
 // Usage:
-// $ cppcheck --check-library --library=posix --enable=style,information --inconclusive --error-exitcode=1 --disable=missingInclude --inline-suppr test/cfg/posix.c
+// $ cppcheck --check-library --library=posix --enable=style,information --inconclusive --error-exitcode=1 --inline-suppr test/cfg/posix.c
 // =>
 // No warnings about bad library configuration, unmatched suppressions, etc. exitcode=0
 //
 
-// cppcheck-suppress-file [valueFlowBailout,purgedConfiguration]
+// cppcheck-suppress-file [valueFlowBailout]
 
 #define _BSD_SOURCE
+#define _XOPEN_SOURCE // wcwidth
 
 #include <aio.h>
 #include <stdio.h> // <- FILE
@@ -32,21 +33,24 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <stdbool.h>
-#include <time.h>
 #include <string.h>
 #include <strings.h>
 #if defined(__APPLE__)
 #include <xlocale.h>
+#include <limits.h>
 #endif
-#if !(defined(__APPLE__) && defined(__MACH__))
+#if !defined(__APPLE__)
 #include <mqueue.h>
 #endif
 #include <stdlib.h>
 #include <unistd.h>
 #include <wchar.h>
+#include <sys/stat.h>
+#include <utime.h>
+#include <stddef.h>
 
 
-#if !(defined(__APPLE__) && defined(__MACH__))
+#if !defined(__APPLE__)
 void nullPointer_mq_timedsend(mqd_t mqdes, const char* msg_ptr, size_t msg_len, unsigned msg_prio, const struct timespec* abs_timeout) {
     // cppcheck-suppress nullPointer
     (void) mq_timedsend(mqdes, NULL, msg_len, msg_prio, abs_timeout);
@@ -141,9 +145,11 @@ void nullPointer_pthread_attr_setstack(const pthread_attr_t *attr) {
     (void) pthread_attr_setstack(NULL, NULL, 0);
     (void) pthread_attr_setstack(attr, NULL, 0);
     // cppcheck-suppress nullPointer
+    // cppcheck-suppress intToPointerCast
     (void) pthread_attr_setstack(NULL, (void*) 1, 0);
 }
 
+#ifndef __linux__
 void nullPointer_setkey(const char *key)
 {
     // cppcheck-suppress nullPointer
@@ -156,6 +162,7 @@ void nullPointer_encrypt(const char block[64], int edflag)
     encrypt(NULL, edflag);
     encrypt(block, edflag);
 }
+#endif
 
 int nullPointer_getopt(int argc, char* const argv[], const char* optstring)
 {
@@ -166,7 +173,7 @@ int nullPointer_getopt(int argc, char* const argv[], const char* optstring)
     return getopt(argc, argv, optstring);
 }
 
-#if !(defined(__APPLE__) && defined(__MACH__))
+#if !defined(__APPLE__)
 int invalidFunctionArgStr_mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned msg_prio)
 {
     // No warning is expected for:
@@ -185,6 +192,12 @@ void invalidFunctionArgStr_mbsnrtowcs(void)
     wcscpy (wenough, L"DEF");
     // No warning is expected for - #11119
     if (mbsnrtowcs (wenough, &cp, 1, 10, &s) != 1 || wcscmp (wenough, L"AEF") != 0) {}
+}
+
+int invalidFunctionArgStr_strncasecmp(const char* s)
+{
+    const char buf[3] = {'a', 'b', 'c'};
+    return strncasecmp(buf, s, 3);
 }
 
 struct tm * ignoredReturnValue_localtime(const time_t *tp)
@@ -219,6 +232,7 @@ int nullPointer_getpwnam_r(const char *name, struct passwd *pwd, char *buffer, s
     return getpwnam_r(name, pwd, buffer, bufsize, result);
 }
 
+#if !defined(__APPLE__)
 int nullPointer_fgetpwent_r(FILE *restrict stream, const struct passwd *restrict pwbuf, char *restrict buf, size_t buflen, struct passwd **restrict pwbufp)
 {
     // cppcheck-suppress nullPointer
@@ -242,6 +256,7 @@ int nullPointer_getpwent_r(const struct passwd *restrict pwbuf, char *restrict b
     (void) getpwent_r(pwbuf, buf, buflen, NULL);
     return getpwent_r(pwbuf, buf, buflen, pwbufp);
 }
+#endif
 
 int nullPointer_getgrgid_r(gid_t gid, struct group *restrict grp, char *restrict buf, size_t buflen, struct group **restrict result)
 {
@@ -532,7 +547,7 @@ int nullPointer_aio_suspend(const struct aiocb *const aiocb_list[], int nitems, 
     return aio_suspend(aiocb_list, nitems, timeout);
 }
 
-#ifdef __linux__
+#if !defined(__linux__) && !defined(__APPLE__)
 // Note: Since glibc 2.28, this function symbol is no longer available to newly linked applications.
 void invalidFunctionArg_llseek(int fd, loff_t offset, int origin)
 {
@@ -563,7 +578,6 @@ void invalidFunctionArg_llseek(int fd, loff_t offset, int origin)
     // cppcheck-suppress llseekCalled
     (void)llseek(fd, offset, SEEK_END);
 }
-#endif
 
 void invalidFunctionArg_lseek64(int fd, off_t offset, int origin)
 {
@@ -584,6 +598,7 @@ void invalidFunctionArg_lseek64(int fd, off_t offset, int origin)
     (void)lseek64(fd, offset, SEEK_CUR);
     (void)lseek64(fd, offset, SEEK_END);
 }
+#endif
 
 void invalidFunctionArg_lseek(int fd, off_t offset, int origin)
 {
@@ -710,6 +725,13 @@ size_t bufferAccessOutOfBounds_strnlen(const char *s, size_t maxlen)
     size_t len = strnlen(buf,2);
     // cppcheck-suppress bufferAccessOutOfBounds
     len+=strnlen(buf,3);
+    len+=strnlen("ab",5);
+    return len;
+}
+
+size_t bufferAccessOutOfBounds_strncasecmp(const char *s)
+{
+    size_t len = strncasecmp(s, "abc", 5);
     return len;
 }
 
@@ -916,11 +938,13 @@ typedef struct {
 
 S_memalign* posix_memalign_memleak(size_t n) { // #12248
     S_memalign* s = malloc(sizeof(*s));
+    // cppcheck-suppress nullPointerOutOfMemory
     s->N = n;
     if (0 != posix_memalign((void**)&s->data, 16, n * sizeof(int))) {
         free(s);
         return NULL;
     }
+    // cppcheck-suppress nullPointerOutOfMemory
     memset(s->data, 0, n * sizeof(int));
     return s;
 }
@@ -984,7 +1008,6 @@ void nullPointer(char *p, int fd, pthread_mutex_t mutex)
     mkdir(p, 0);
     getcwd(0, 0);
     // cppcheck-suppress nullPointer
-    // cppcheck-suppress readdirCalled
     readdir(0);
     // cppcheck-suppress nullPointer
     // cppcheck-suppress utimeCalled
@@ -1044,6 +1067,26 @@ void memleak_getaddrinfo() // #6994
     freeaddrinfo(res);
     getaddrinfo("node", NULL, NULL, &res);
     // cppcheck-suppress memleak
+}
+
+void memleak_getaddrinfo_if() // #12506
+{
+    struct addrinfo hints = {};
+    struct addrinfo* addrs;
+    int err = getaddrinfo("example.com", "https", &hints, &addrs);
+    if (err != 0) {}
+    else {
+        freeaddrinfo(addrs);
+    }
+}
+
+void memleak_getaddrinfo_if2() // #12996
+{
+    struct addrinfo *addrs = NULL;
+    if (getaddrinfo("a", "b", NULL, &addrs)) {
+        return;
+    }
+    freeaddrinfo(addrs);
 }
 
 void memleak_mmap(int fd)
@@ -1130,13 +1173,16 @@ int munmap_no_double_free(int tofd, // #11396
         return -1;
     }
 
+    // cppcheck-suppress nullPointerOutOfMemory
     memcpy(tptr,fptr,len);
 
+    // cppcheck-suppress nullPointerOutOfMemory
     if ((rc = munmap(fptr,len)) != 0) {
         // cppcheck-suppress memleak
         return -1;
     }
 
+    // cppcheck-suppress nullPointerOutOfMemory
     if ((rc = munmap(tptr,len)) != 0) {
         return -1;
     }
@@ -1156,6 +1202,7 @@ void resourceLeak_fdopen2(const char* fn) // #2767
     // cppcheck-suppress valueFlowBailoutIncompleteVar
     int fi = open(fn, O_RDONLY);
     FILE* fd = fdopen(fi, "r");
+    // cppcheck-suppress nullPointerOutOfResources
     fclose(fd);
 }
 
@@ -1215,8 +1262,10 @@ void resourceLeak_open2(void)
 void noleak(int x, int y, int z)
 {
     DIR *p1 = fdopendir(x);
+    // cppcheck-suppress nullPointerOutOfResources
     closedir(p1);
     DIR *p2 = opendir("abc");
+    // cppcheck-suppress nullPointerOutOfResources
     closedir(p2);
     int s = socket(AF_INET,SOCK_STREAM,0);
     close(s);
@@ -1277,7 +1326,7 @@ void uninitvar(int fd)
     pthread_mutex_t mutex, mutex1, mutex2, mutex3;
     // cppcheck-suppress uninitvar
     write(x1,"ab",2);
-    // TODO cppcheck-suppress uninitvar
+    // cppcheck-suppress uninitvar
     write(fd,buf,2); // #6325
     // cppcheck-suppress uninitvar
     write(fd,"ab",x2);
@@ -1308,7 +1357,7 @@ void uninitvar(int fd)
     // cppcheck-suppress utimeCalled
     utime(filename1, times);
     // cppcheck-suppress constVariable
-    struct timeval times1[2];
+    struct utimbuf times1[2];
     // cppcheck-suppress uninitvar
     // cppcheck-suppress utimeCalled
     utime(filename2, times1);
@@ -1356,7 +1405,7 @@ void uninitvar_types(void)
     b + 1;
 
     struct dirent d;
-    // cppcheck-suppress constStatement - TODO: uninitvar
+    // cppcheck-suppress [uninitvar,constStatement]
     d.d_ino + 1;
 }
 
@@ -1373,7 +1422,7 @@ void timet_h(const struct timespec* ptp1)
     clock_settime(clk_id2, ptp1);
 
     struct timespec tp;
-    // FIXME cppcheck-suppress uninitvar
+    // cppcheck-suppress uninitvar
     clock_settime(CLOCK_REALTIME, &tp); // #6577 - false negative
     // cppcheck-suppress uninitvar
     clock_settime(clk_id3, &tp);
@@ -1462,4 +1511,120 @@ void ctime_r_test(const time_t * timep, char * bufSizeUnknown)
 
     // cppcheck-suppress ctime_rCalled
     ctime_r(timep, bufSizeUnknown);
+}
+
+void invalidFunctionArg_nice(int inc)
+{
+    // cppcheck-suppress invalidFunctionArg
+    nice(-21);
+    nice(-20);
+    nice(19);
+    // cppcheck-suppress invalidFunctionArg
+    nice(+20);
+}
+
+void pthread_cond_wait_test(pthread_cond_t *cond, pthread_mutex_t *mutex)
+{
+    (void)pthread_cond_wait(cond, mutex);
+}
+
+void pthread_cond_timedwait_test(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
+{
+    // cppcheck-suppress nullPointer
+    (void)pthread_cond_timedwait(cond, mutex, NULL);
+    (void)pthread_cond_timedwait(cond, mutex, abstime);
+}
+
+void pthread_cond_init_test(pthread_cond_t *cond, const pthread_condattr_t *attr)
+{
+    (void)pthread_cond_init(cond, NULL);
+    (void)pthread_cond_init(cond, attr);
+    const pthread_condattr_t *uattr;
+    // cppcheck-suppress uninitvar
+    (void)pthread_cond_init(cond, uattr);
+}
+
+void pthread_cond_destroy_test(const pthread_cond_t *cond)
+{
+    (void)pthread_cond_destroy(cond);
+}
+
+void pthread_cleanup_push_test(void (*routine)(void *), void *arg)
+{
+    pthread_cleanup_push(routine, arg);
+    pthread_cleanup_pop(0);
+}
+
+void pthread_cleanup_push_test_NULL(void (*routine)(void *))
+{
+    pthread_cleanup_push(routine, NULL);
+    pthread_cleanup_pop(0);
+}
+
+void pthread_mutexattr_init_test(pthread_mutexattr_t *attr)
+{
+    (void)pthread_mutexattr_init(attr);
+}
+
+void pthread_mutexattr_destroy_test(pthread_mutexattr_t *attr)
+{
+    (void)pthread_mutexattr_destroy(attr);
+}
+
+void pthread_mutexattr_settype_test(const pthread_mutexattr_t *attr, int type)
+{
+    (void)pthread_mutexattr_settype(attr, type);
+}
+
+void pthread_mutexattr_gettype_test(const pthread_mutexattr_t *attr, int *type)
+{
+    (void)pthread_mutexattr_gettype(attr, type);
+}
+
+void pthread_setcancelstate_test(int state, int *oldstate)
+{
+    (void)pthread_setcancelstate(state, oldstate);
+}
+
+void pthread_setcanceltype_test(int type, int *oldtype)
+{
+    (void)pthread_setcanceltype(type, oldtype);
+}
+
+void pthread_cancel_test(pthread_t thread)
+{
+    (void)pthread_cancel(thread);
+}
+
+void pthread_define_test()
+{
+    PTHREAD_STACK_MIN;
+    PTHREAD_CANCEL_ASYNCHRONOUS;
+    PTHREAD_CANCEL_ENABLE;
+    PTHREAD_CANCEL_DEFERRED;
+    PTHREAD_CANCEL_DISABLE;
+    PTHREAD_CANCELED;
+    pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+    (void)cond;
+    PTHREAD_CREATE_DETACHED;
+    PTHREAD_CREATE_JOINABLE;
+    PTHREAD_EXPLICIT_SCHED;
+    PTHREAD_INHERIT_SCHED;
+    PTHREAD_MUTEX_DEFAULT;
+    PTHREAD_MUTEX_ERRORCHECK;
+    PTHREAD_MUTEX_NORMAL;
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    (void)mutex;
+    PTHREAD_MUTEX_RECURSIVE;
+    pthread_once_t once_block = PTHREAD_ONCE_INIT;
+    (void)once_block;
+    PTHREAD_PRIO_INHERIT;
+    PTHREAD_PRIO_NONE;
+    PTHREAD_PRIO_PROTECT;
+    PTHREAD_PROCESS_SHARED;
+    PTHREAD_PROCESS_PRIVATE;
+    pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
+    (void)rwlock;
+    PTHREAD_SCOPE_PROCESS;
+    PTHREAD_SCOPE_SYSTEM;
 }

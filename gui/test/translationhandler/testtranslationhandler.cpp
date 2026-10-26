@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2021 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,7 +36,7 @@ static QStringList getTranslationNames(const TranslationHandler& handler)
 void TestTranslationHandler::construct() const
 {
     TranslationHandler handler;
-    QCOMPARE(getTranslationNames(handler).size(), 13);  // 12 translations + english
+    QCOMPARE(getTranslationNames(handler).size(), 15);  // 14 translations + english
     QCOMPARE(handler.getCurrentLanguage(), QString("en"));
 }
 

@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,16 +22,18 @@
 #define checkinternalH
 //---------------------------------------------------------------------------
 
+#ifdef CHECK_INTERNAL
+
 #include "check.h"
+#include "checkimpl.h"
 #include "config.h"
-#include "errortypes.h"
-#include "settings.h"
-#include "tokenize.h"
 
 #include <string>
 
 class ErrorLogger;
 class Token;
+class Tokenizer;
+class Settings;
 
 /// @addtogroup Checks
 /// @{
@@ -41,27 +43,25 @@ class Token;
 class CPPCHECKLIB CheckInternal : public Check {
 public:
     /** This constructor is used when registering the CheckClass */
-    CheckInternal() : Check(myName()) {}
+    CheckInternal() : Check("cppcheck internal API usage") {}
 
 private:
-    /** This constructor is used when running checks. */
-    CheckInternal(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
-        : Check(myName(), tokenizer, settings, errorLogger) {}
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger& errorLogger) override;
 
-    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override {
-        if (!tokenizer.getSettings().checks.isEnabled(Checks::internalCheck))
-            return;
+    void getErrorMessages(ErrorLogger& errorLogger, const Settings &settings) const override;
 
-        CheckInternal checkInternal(&tokenizer, &tokenizer.getSettings(), errorLogger);
-
-        checkInternal.checkTokenMatchPatterns();
-        checkInternal.checkTokenSimpleMatchPatterns();
-        checkInternal.checkMissingPercentCharacter();
-        checkInternal.checkUnknownPattern();
-        checkInternal.checkRedundantNextPrevious();
-        checkInternal.checkExtraWhitespace();
-        checkInternal.checkRedundantTokCheck();
+    std::string classInfo() const override {
+        // Don't include these checks on the WIKI where people can read what
+        // checks there are. These checks are not intended for users.
+        return "";
     }
+};
+
+class CPPCHECKLIB CheckInternalImpl : public CheckImpl {
+public:
+    /** This constructor is used when running checks. */
+    CheckInternalImpl(const Tokenizer *tokenizer, const Settings &settings, ErrorLogger &errorLogger)
+        : CheckImpl(tokenizer, settings, errorLogger) {}
 
     /** @brief %Check if a simple pattern is used inside Token::Match or Token::findmatch */
     void checkTokenMatchPatterns();
@@ -84,7 +84,6 @@ private:
     /** @brief %Check if there is a redundant check for none-nullness of parameter before Match functions, such as (tok && Token::Match(tok, "foo")) */
     void checkRedundantTokCheck();
 
-    void multiComparePatternError(const Token *tok, const std::string &pattern, const std::string &funcname);
     void simplePatternError(const Token *tok, const std::string &pattern, const std::string &funcname);
     void complexPatternError(const Token *tok, const std::string &pattern, const std::string &funcname);
     void missingPercentCharacterError(const Token *tok, const std::string &pattern, const std::string &funcname);
@@ -93,30 +92,10 @@ private:
     void orInComplexPattern(const Token *tok, const std::string &pattern, const std::string &funcname);
     void extraWhitespaceError(const Token *tok, const std::string &pattern, const std::string &funcname);
     void checkRedundantTokCheckError(const Token *tok);
-
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        CheckInternal c(nullptr, settings, errorLogger);
-        c.multiComparePatternError(nullptr, ";|%type%", "Match");
-        c.simplePatternError(nullptr, "class {", "Match");
-        c.complexPatternError(nullptr, "%type% ( )", "Match");
-        c.missingPercentCharacterError(nullptr, "%num", "Match");
-        c.unknownPatternError(nullptr, "%typ");
-        c.redundantNextPreviousError(nullptr, "previous", "next");
-        c.orInComplexPattern(nullptr, "||", "Match");
-        c.extraWhitespaceError(nullptr, "%str% ", "Match");
-        c.checkRedundantTokCheckError(nullptr);
-    }
-
-    static std::string myName() {
-        return "cppcheck internal API usage";
-    }
-
-    std::string classInfo() const override {
-        // Don't include these checks on the WIKI where people can read what
-        // checks there are. These checks are not intended for users.
-        return "";
-    }
 };
 /// @}
 //---------------------------------------------------------------------------
+
+#endif // CHECK_INTERNAL
+
 #endif // checkinternalH

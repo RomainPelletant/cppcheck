@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,8 @@
 #include "checkinternal.h"
 
 #include "astutils.h"
+#include "errortypes.h"
+#include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
 #include "tokenize.h"
@@ -29,13 +31,7 @@
 #include <set>
 #include <vector>
 
-// Register this check class (by creating a static instance of it).
-// Disabled in release builds
-namespace {
-    CheckInternal instance;
-}
-
-void CheckInternal::checkTokenMatchPatterns()
+void CheckInternalImpl::checkTokenMatchPatterns()
 {
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope *scope : symbolDatabase->functionScopes) {
@@ -86,7 +82,7 @@ void CheckInternal::checkTokenMatchPatterns()
     }
 }
 
-void CheckInternal::checkRedundantTokCheck()
+void CheckInternalImpl::checkRedundantTokCheck()
 {
     for (const Token *tok = mTokenizer->tokens(); tok; tok = tok->next()) {
         if (Token::Match(tok, "&& Token :: simpleMatch|Match|findsimplematch|findmatch (")) {
@@ -121,13 +117,13 @@ void CheckInternal::checkRedundantTokCheck()
 }
 
 
-void CheckInternal::checkRedundantTokCheckError(const Token* tok)
+void CheckInternalImpl::checkRedundantTokCheckError(const Token* tok)
 {
     reportError(tok, Severity::style, "redundantTokCheck",
-                "Unnecessary check of \"" + (tok? tok->expressionString(): emptyString) + "\", match-function already checks if it is null.");
+                "Unnecessary check of \"" + (tok? tok->expressionString(): "") + "\", match-function already checks if it is null.");
 }
 
-void CheckInternal::checkTokenSimpleMatchPatterns()
+void CheckInternalImpl::checkTokenSimpleMatchPatterns()
 {
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope* scope : symbolDatabase->functionScopes) {
@@ -211,7 +207,7 @@ namespace {
     };
 }
 
-void CheckInternal::checkMissingPercentCharacter()
+void CheckInternalImpl::checkMissingPercentCharacter()
 {
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope* scope : symbolDatabase->functionScopes) {
@@ -228,8 +224,7 @@ void CheckInternal::checkMissingPercentCharacter()
 
             const std::string pattern = patternTok->strValue();
 
-            std::set<std::string>::const_iterator knownPattern, knownPatternsEnd = knownPatterns.cend();
-            for (knownPattern = knownPatterns.cbegin(); knownPattern != knownPatternsEnd; ++knownPattern) {
+            for (auto knownPattern = knownPatterns.cbegin(); knownPattern != knownPatterns.cend(); ++knownPattern) {
                 const std::string brokenPattern = knownPattern->substr(0, knownPattern->size() - 1);
 
                 std::string::size_type pos = 0;
@@ -253,7 +248,7 @@ void CheckInternal::checkMissingPercentCharacter()
     }
 }
 
-void CheckInternal::checkUnknownPattern()
+void CheckInternalImpl::checkUnknownPattern()
 {
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope* scope : symbolDatabase->functionScopes) {
@@ -287,7 +282,7 @@ void CheckInternal::checkUnknownPattern()
     }
 }
 
-void CheckInternal::checkRedundantNextPrevious()
+void CheckInternalImpl::checkRedundantNextPrevious()
 {
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope* scope : symbolDatabase->functionScopes) {
@@ -296,7 +291,7 @@ void CheckInternal::checkRedundantNextPrevious()
                 continue;
             tok = tok->next();
 
-            if (Token::Match(tok, "previous ( ) . next|tokAt|strAt|linkAt (") || Token::Match(tok, "next ( ) . previous|tokAt|strAt|linkAt (") ||
+            if (Token::Match(tok, "previous ( ) . previous|next|tokAt|str|strAt|link|linkAt (") || Token::Match(tok, "next ( ) . previous|next|tokAt|str|strAt|link|linkAt (") ||
                 (Token::simpleMatch(tok, "tokAt (") && Token::Match(tok->linkAt(1), ") . previous|next|tokAt|strAt|linkAt|str|link ("))) {
                 const std::string& func1 = tok->str();
                 const std::string& func2 = tok->linkAt(1)->strAt(2);
@@ -305,20 +300,12 @@ void CheckInternal::checkRedundantNextPrevious()
                     continue;
 
                 redundantNextPreviousError(tok, func1, func2);
-            } else if (Token::Match(tok, "next|previous ( ) . next|previous ( ) . next|previous|linkAt|strAt|link|str (")) {
-                const std::string& func1 = tok->str();
-                const std::string& func2 = tok->strAt(8);
-
-                if ((func2 == "previous" || func2 == "next" || func2 == "str" || func2 == "link") && tok->strAt(10) != ")")
-                    continue;
-
-                redundantNextPreviousError(tok, func1, func2);
             }
         }
     }
 }
 
-void CheckInternal::checkExtraWhitespace()
+void CheckInternalImpl::checkExtraWhitespace()
 {
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope* scope : symbolDatabase->functionScopes) {
@@ -344,57 +331,79 @@ void CheckInternal::checkExtraWhitespace()
     }
 }
 
-void CheckInternal::multiComparePatternError(const Token* tok, const std::string& pattern, const std::string &funcname)
-{
-    reportError(tok, Severity::error, "multiComparePatternError",
-                "Bad multicompare pattern (a %cmd% must be first unless it is %or%,%op%,%cop%,%name%,%oror%) inside Token::" + funcname + "() call: \"" + pattern + "\""
-                );
-}
-
-void CheckInternal::simplePatternError(const Token* tok, const std::string& pattern, const std::string &funcname)
+void CheckInternalImpl::simplePatternError(const Token* tok, const std::string& pattern, const std::string &funcname)
 {
     reportError(tok, Severity::warning, "simplePatternError",
                 "Found simple pattern inside Token::" + funcname + "() call: \"" + pattern + "\""
                 );
 }
 
-void CheckInternal::complexPatternError(const Token* tok, const std::string& pattern, const std::string &funcname)
+void CheckInternalImpl::complexPatternError(const Token* tok, const std::string& pattern, const std::string &funcname)
 {
     reportError(tok, Severity::error, "complexPatternError",
                 "Found complex pattern inside Token::" + funcname + "() call: \"" + pattern + "\""
                 );
 }
 
-void CheckInternal::missingPercentCharacterError(const Token* tok, const std::string& pattern, const std::string& funcname)
+void CheckInternalImpl::missingPercentCharacterError(const Token* tok, const std::string& pattern, const std::string& funcname)
 {
     reportError(tok, Severity::error, "missingPercentCharacter",
                 "Missing percent end character in Token::" + funcname + "() pattern: \"" + pattern + "\""
                 );
 }
 
-void CheckInternal::unknownPatternError(const Token* tok, const std::string& pattern)
+void CheckInternalImpl::unknownPatternError(const Token* tok, const std::string& pattern)
 {
     reportError(tok, Severity::error, "unknownPattern",
                 "Unknown pattern used: \"" + pattern + "\"");
 }
 
-void CheckInternal::redundantNextPreviousError(const Token* tok, const std::string& func1, const std::string& func2)
+void CheckInternalImpl::redundantNextPreviousError(const Token* tok, const std::string& func1, const std::string& func2)
 {
     reportError(tok, Severity::style, "redundantNextPrevious",
                 "Call to 'Token::" + func1 + "()' followed by 'Token::" + func2 + "()' can be simplified.");
 }
 
-void CheckInternal::orInComplexPattern(const Token* tok, const std::string& pattern, const std::string &funcname)
+void CheckInternalImpl::orInComplexPattern(const Token* tok, const std::string& pattern, const std::string &funcname)
 {
     reportError(tok, Severity::error, "orInComplexPattern",
                 "Token::" + funcname + "() pattern \"" + pattern + "\" contains \"||\" or \"|\". Replace it by \"%oror%\" or \"%or%\".");
 }
 
-void CheckInternal::extraWhitespaceError(const Token* tok, const std::string& pattern, const std::string &funcname)
+void CheckInternalImpl::extraWhitespaceError(const Token* tok, const std::string& pattern, const std::string &funcname)
 {
     reportError(tok, Severity::warning, "extraWhitespaceError",
                 "Found extra whitespace inside Token::" + funcname + "() call: \"" + pattern + "\""
                 );
+}
+
+void CheckInternal::runChecks(const Tokenizer &tokenizer, ErrorLogger& errorLogger)
+{
+    if (!tokenizer.getSettings().checks.isEnabled(Checks::internalCheck))
+        return;
+
+    CheckInternalImpl checkInternal(&tokenizer, tokenizer.getSettings(), errorLogger);
+
+    checkInternal.checkTokenMatchPatterns();
+    checkInternal.checkTokenSimpleMatchPatterns();
+    checkInternal.checkMissingPercentCharacter();
+    checkInternal.checkUnknownPattern();
+    checkInternal.checkRedundantNextPrevious();
+    checkInternal.checkExtraWhitespace();
+    checkInternal.checkRedundantTokCheck();
+}
+
+void CheckInternal::getErrorMessages(ErrorLogger& errorLogger, const Settings &settings) const
+{
+    CheckInternalImpl c(nullptr, settings, errorLogger);
+    c.simplePatternError(nullptr, "class {", "Match");
+    c.complexPatternError(nullptr, "%type% ( )", "Match");
+    c.missingPercentCharacterError(nullptr, "%num", "Match");
+    c.unknownPatternError(nullptr, "%typ");
+    c.redundantNextPreviousError(nullptr, "previous", "next");
+    c.orInComplexPattern(nullptr, "||", "Match");
+    c.extraWhitespaceError(nullptr, "%str% ", "Match");
+    c.checkRedundantTokCheckError(nullptr);
 }
 
 #endif // #ifdef CHECK_INTERNAL

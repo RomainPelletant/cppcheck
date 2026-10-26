@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -69,9 +69,9 @@
 #include <QTextDocument>
 #include <QTextEdit>
 #include <QTextStream>
-#include <QVariant>
-#include <QVariantMap>
 #include <Qt>
+
+enum class ReportType : std::uint8_t;
 
 ResultsView::ResultsView(QWidget * parent) :
     QWidget(parent),
@@ -123,6 +123,7 @@ void ResultsView::clear(bool results)
     }
 
     mUI->mDetails->setText(QString());
+    mUI->mCode->clear();
 
     mStatistics->clear();
     delete mCheckSettings;
@@ -134,8 +135,6 @@ void ResultsView::clear(bool results)
     mUI->mProgress->setFormat("%p%");
 
     mUI->mLabelCriticalErrors->setVisible(false);
-
-    mSuccess = false;
 }
 
 void ResultsView::clear(const QString &filename)
@@ -153,7 +152,16 @@ const ShowTypes & ResultsView::getShowTypes() const
     return mUI->mTree->mShowSeverities;
 }
 
-void ResultsView::progress(int value, const QString& description)
+void ResultsView::setReportType(ReportType reportType) {
+    mUI->mTree->setReportType(reportType);
+}
+
+void ResultsView::setResultsSource(ResultsTree::ResultsSource source)
+{
+    mUI->mTree->setResultsSource(source);
+}
+
+void ResultsView::filesCheckedProgress(int value, const QString& description)
 {
     mUI->mProgress->setValue(value);
     mUI->mProgress->setFormat(QString("%p% (%1)").arg(description));
@@ -258,7 +266,7 @@ void ResultsView::printPreview()
     dialog.exec();
 }
 
-void ResultsView::print(QPrinter* printer)
+void ResultsView::print(QPrinter* printer) const
 {
     if (!hasResults()) {
         QMessageBox msgBox;
@@ -296,7 +304,7 @@ void ResultsView::setCheckDirectory(const QString &dir)
     mUI->mTree->setCheckDirectory(dir);
 }
 
-QString ResultsView::getCheckDirectory()
+QString ResultsView::getCheckDirectory() const
 {
     return mUI->mTree->getCheckDirectory();
 }
@@ -310,7 +318,6 @@ void ResultsView::setCheckSettings(const Settings &settings)
 
 void ResultsView::checkingStarted(int count)
 {
-    mSuccess = true;
     mUI->mProgress->setVisible(true);
     mUI->mProgress->setMaximum(PROGRESS_MAX);
     mUI->mProgress->setValue(0);
@@ -338,7 +345,7 @@ void ResultsView::checkingFinished()
         //Tell user that we found no errors
         if (!hasResults()) {
             QMessageBox msg(QMessageBox::Information,
-                            tr("Cppcheck"),
+                            "Cppcheck",
                             tr("No errors found."),
                             QMessageBox::Ok,
                             this);
@@ -349,7 +356,7 @@ void ResultsView::checkingFinished()
             QString text = tr("Errors were found, but they are configured to be hidden.\n" \
                               "To toggle what kind of errors are shown, open view menu.");
             QMessageBox msg(QMessageBox::Information,
-                            tr("Cppcheck"),
+                            "Cppcheck",
                             text,
                             QMessageBox::Ok,
                             this);
@@ -383,15 +390,8 @@ void ResultsView::translate()
     mUI->mTree->translate();
 }
 
-void ResultsView::disableProgressbar()
-{
-    mUI->mProgress->setEnabled(false);
-}
-
 void ResultsView::readErrorsXml(const QString &filename)
 {
-    mSuccess = false; // Don't know if results come from an aborted analysis
-
     const int version = XmlReport::determineVersion(filename);
     if (version == 0) {
         QMessageBox msgBox;
@@ -419,7 +419,7 @@ void ResultsView::readErrorsXml(const QString &filename)
         msgBox.exec();
     }
 
-    for (const ErrorItem& item : errors) {
+    for (const ErrorItem& item : utils::as_const(errors)) {
         handleCriticalError(item);
         mUI->mTree->addErrorItem(item);
     }
@@ -434,54 +434,42 @@ void ResultsView::readErrorsXml(const QString &filename)
     mUI->mTree->setCheckDirectory(dir);
 }
 
-void ResultsView::updateDetails(const QModelIndex &index)
+void ResultsView::updateDetails(const ResultItem* item)
 {
-    const auto *model = qobject_cast<const QStandardItemModel*>(mUI->mTree->model());
-    QStandardItem *item = model->itemFromIndex(index);
-
-    if (!item) {
+    if (!item || !item->errorItem) {
         mUI->mCode->clear();
         mUI->mDetails->setText(QString());
         return;
     }
 
-    // Make sure we are working with the first column
-    if (item->parent() && item->column() != 0)
-        item = item->parent()->child(item->row(), 0);
-
-    QVariantMap data = item->data().toMap();
-
-    // If there is no severity data then it is a parent item without summary and message
-    if (!data.contains("severity")) {
+    // File item => No details can be shown
+    if (item->getType() == ResultItem::Type::file) {
         mUI->mCode->clear();
         mUI->mDetails->setText(QString());
         return;
     }
 
-    const QString message = data["message"].toString();
-    QString formattedMsg = message;
+    QString formattedMsg = item->errorItem->message;
 
-    const QString file0 = data["file0"].toString();
-    if (!file0.isEmpty() && Path::isHeader(data["file"].toString().toStdString()))
+    const QString file0 = item->errorItem->file0;
+    if (!file0.isEmpty() && Path::isHeader(item->getErrorPathItem().file.toStdString()))
         formattedMsg += QString("\n\n%1: %2").arg(tr("First included by")).arg(QDir::toNativeSeparators(file0));
 
-    if (data["cwe"].toInt() > 0)
-        formattedMsg.prepend("CWE: " + QString::number(data["cwe"].toInt()) + "\n");
+    if (item->errorItem->cwe > 0)
+        formattedMsg.prepend("CWE: " + QString::number(item->errorItem->cwe) + "\n");
     if (mUI->mTree->showIdColumn())
-        formattedMsg.prepend(tr("Id") + ": " + data["id"].toString() + "\n");
-    if (data["incomplete"].toBool())
-        formattedMsg += "\n" + tr("Bug hunting analysis is incomplete");
+        formattedMsg.prepend(tr("Id") + ": " + item->errorItem->errorId + "\n");
     mUI->mDetails->setText(formattedMsg);
 
-    const int lineNumber = data["line"].toInt();
+    const int lineNumber = item->getErrorPathItem().line;
 
-    QString filepath = data["file"].toString();
+    QString filepath = item->getErrorPathItem().file;
     if (!QFileInfo::exists(filepath) && QFileInfo::exists(mUI->mTree->getCheckDirectory() + '/' + filepath))
         filepath = mUI->mTree->getCheckDirectory() + '/' + filepath;
 
     QStringList symbols;
-    if (data.contains("symbolNames"))
-        symbols = data["symbolNames"].toString().split("\n");
+    if (!item->errorItem->symbolNames.isEmpty())
+        symbols = item->errorItem->symbolNames.split("\n");
 
     if (filepath == mUI->mCode->getFileName()) {
         mUI->mCode->setError(lineNumber, symbols);
@@ -530,6 +518,7 @@ void ResultsView::logCopyComplete()
         const QListWidgetItem * item = mUI->mListLog->item(i);
         if (nullptr != item) {
             logText += item->text();
+            logText += "\n";
         }
     }
     QClipboard *clipboard = QApplication::clipboard();
@@ -553,7 +542,6 @@ void ResultsView::on_mListLog_customContextMenuRequested(const QPoint &pos)
 
 void ResultsView::stopAnalysis()
 {
-    mSuccess = false;
     mUI->mLabelCriticalErrors->setText(tr("Analysis was stopped"));
     mUI->mLabelCriticalErrors->setVisible(true);
 }
@@ -576,10 +564,5 @@ void ResultsView::handleCriticalError(const ErrorItem &item)
         msg += ". " + tr("Analysis was aborted.");
         mUI->mLabelCriticalErrors->setText(msg);
         mUI->mLabelCriticalErrors->setVisible(true);
-        mSuccess = false;
     }
-}
-
-bool ResultsView::isSuccess() const {
-    return mSuccess;
 }

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,11 +16,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#if defined(__GNUC__) && (defined(_WIN32) || defined(__CYGWIN__))
-#undef __STRICT_ANSI__
-#endif
-
 //#define LOG_EMACS_MARKER
+
+#if defined(__CYGWIN__)
+#define _POSIX_C_SOURCE 200112L // required to have readlink()
+#define _BSD_SOURCE // required to have realpath()
+#endif
 
 #include "path.h"
 #include "utils.h"
@@ -38,6 +39,7 @@
 #include <simplecpp.h>
 
 #ifndef _WIN32
+#include <stdexcept>
 #include <sys/types.h>
 #include <unistd.h>
 #else
@@ -49,6 +51,8 @@
 #endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#elif defined(__HAIKU__)
+#include <image.h>
 #endif
 
 
@@ -61,6 +65,7 @@ static constexpr bool caseInsensitiveFilesystem()
     return true;
 #else
     // TODO: Non-windows filesystems might be case insensitive
+    // needs to be determined per filesystem and location - e.g. /sys/fs/ext4/features/casefold
     return false;
 #endif
 }
@@ -155,6 +160,17 @@ std::string Path::getCurrentExecutablePath(const char* fallback)
 #elif defined(__APPLE__)
     uint32_t size = sizeof(buf);
     success = (_NSGetExecutablePath(buf, &size) == 0);
+#elif defined(__HAIKU__)
+    int32 cookie = 0;
+    image_info info;
+    while (get_next_image_info(B_CURRENT_TEAM, &cookie, &info) == B_OK)
+    {
+        if (info.type == B_APP_IMAGE)
+        {
+            break;
+        }
+    }
+    return std::string(info.name);
 #else
     const char* procPath =
 #ifdef __SVR4 // Solaris
@@ -164,24 +180,32 @@ std::string Path::getCurrentExecutablePath(const char* fallback)
 #else // Linux
         "/proc/self/exe";
 #endif
-    success = (readlink(procPath, buf, sizeof(buf)) != -1);
+    // readlink does not null-terminate the string if the buffer is too small, therefore write bufsize - 1
+    success = (readlink(procPath, buf, sizeof(buf) - 1) != -1);
 #endif
     return success ? std::string(buf) : std::string(fallback);
 }
 
 bool Path::isAbsolute(const std::string& path)
 {
-    const std::string& nativePath = toNativeSeparators(path);
-
 #ifdef _WIN32
     if (path.length() < 2)
         return false;
 
+    if ((path[0] == '\\' || path[0] == '/') && (path[1] == '\\' || path[1] == '/'))
+        return true;
+
     // On Windows, 'C:\foo\bar' is an absolute path, while 'C:foo\bar' is not
-    return startsWith(nativePath, "\\\\") || (std::isalpha(nativePath[0]) != 0 && nativePath.compare(1, 2, ":\\") == 0);
+    return std::isalpha(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/');
 #else
-    return !nativePath.empty() && nativePath[0] == '/';
+    return !path.empty() && path[0] == '/';
 #endif
+}
+
+bool Path::isRelative(const std::string& path)
+{
+    const std::string p = fromNativeSeparators(path);
+    return (p.find('/') != std::string::npos) && !isAbsolute(path);
 }
 
 std::string Path::getRelativePath(const std::string& absolutePath, const std::vector<std::string>& basePaths)
@@ -213,10 +237,13 @@ static const std::unordered_set<std::string> header_exts = {
     ".h", ".hpp", ".h++", ".hxx", ".hh"
 };
 
-bool Path::acceptFile(const std::string &path, const std::set<std::string> &extra)
+bool Path::acceptFile(const std::string &path, const std::set<std::string> &extra, Standards::Language* lang)
 {
     bool header = false;
-    return (identify(path, false, &header) != Standards::Language::None && !header) || extra.find(getFilenameExtension(path)) != extra.end();
+    Standards::Language l = identify(path, false, &header);
+    if (lang)
+        *lang = l;
+    return (l != Standards::Language::None && !header) || extra.find(getFilenameExtension(path)) != extra.end();
 }
 
 static bool hasEmacsCppMarker(const char* path)
@@ -234,8 +261,15 @@ static bool hasEmacsCppMarker(const char* path)
         return false;
     std::string buf(128, '\0');
     {
+#if __cplusplus >= 201703L
+        // C++17 provides an overload with non-const data()
+        #define CONST_CAST(x) (x)
+#else
+        #define CONST_CAST(x) const_cast<char*>(x)
+#endif
         // TODO: read the whole first line only
-        const char * const res = fgets(const_cast<char*>(buf.data()), buf.size(), fp);
+        const char * const res = fgets(CONST_CAST(buf.data()), buf.size(), fp);
+#undef CONST_CAST
         fclose(fp);
         fp = nullptr;
         if (!res)
@@ -265,11 +299,21 @@ static bool hasEmacsCppMarker(const char* path)
 #endif
     // TODO: support /* */ comments
     const std::string buf_trim = trim(buf); // trim whitespaces
-    if (buf_trim[0] != '/' || buf_trim[1] != '/') {
+    if (buf_trim[0] == '/' && buf_trim[1] == '*') {
+        const auto pos_cmt = buf.find("*/", 2);
+        if (pos_cmt != std::string::npos && pos_cmt < (pos2 + 3))
+        {
+ #ifdef LOG_EMACS_MARKER
+            std::cout << path << " - Emacs marker not contained in C-style comment block: '"  << buf.substr(pos1, (pos2 + 3) - pos1) << "'" << '\n';
+ #endif
+            return false; // not in a comment
+        }
+    }
+    else if (buf_trim[0] != '/' || buf_trim[1] != '/') {
 #ifdef LOG_EMACS_MARKER
         std::cout << path << " - Emacs marker not in a comment: '"  << buf.substr(pos1, (pos2 + 3) - pos1) << "'" << '\n';
 #endif
-        return false; // not a comment
+        return false; // not in a comment
     }
 
     // there are more variations with lowercase and no whitespaces
@@ -300,7 +344,6 @@ static bool hasEmacsCppMarker(const char* path)
 
 Standards::Language Path::identify(const std::string &path, bool cppHeaderProbe, bool *header)
 {
-    // cppcheck-suppress uninitvar - TODO: FP
     if (header)
         *header = false;
 
@@ -318,7 +361,6 @@ Standards::Language Path::identify(const std::string &path, bool cppHeaderProbe,
         return Standards::Language::CPP;
     if (c_src_exts.find(ext) != c_src_exts.end())
         return Standards::Language::C;
-    // cppcheck-suppress knownConditionTrueFalse - TODO: FP
     if (!caseInsensitiveFilesystem())
         strTolower(ext);
     if (ext == ".h") {
@@ -347,16 +389,26 @@ bool Path::isHeader(const std::string &path)
 
 std::string Path::getAbsoluteFilePath(const std::string& filePath)
 {
+    if (filePath.empty())
+        return "";
+
     std::string absolute_path;
 #ifdef _WIN32
     char absolute[_MAX_PATH];
     if (_fullpath(absolute, filePath.c_str(), _MAX_PATH))
         absolute_path = absolute;
+    if (!absolute_path.empty() && absolute_path.back() == '\\')
+        absolute_path.pop_back();
 #elif defined(__linux__) || defined(__sun) || defined(__hpux) || defined(__GNUC__) || defined(__CPPCHECK__)
-    char * absolute = realpath(filePath.c_str(), nullptr);
+    // simplify the path since any non-existent part has to exist even if discarded by ".."
+    std::string spath = Path::simplifyPath(filePath);
+    char * absolute = realpath(spath.c_str(), nullptr);
     if (absolute)
         absolute_path = absolute;
     free(absolute);
+    // only throw on realpath() failure to resolve a path when the given one was non-existent
+    if (!spath.empty() && absolute_path.empty() && !exists(spath))
+        throw std::runtime_error("path '" + filePath + "' does not exist");
 #else
 #error Platform absolute path function needed
 #endif
@@ -400,10 +452,33 @@ bool Path::isDirectory(const std::string &path)
     return file_type(path) == S_IFDIR;
 }
 
-std::string Path::join(const std::string& path1, const std::string& path2) {
+bool Path::exists(const std::string &path, bool* isdir)
+{
+    const auto type = file_type(path);
+    if (type == S_IFDIR)
+    {
+        if (isdir)
+            *isdir = true;
+        return true;
+    }
+    if (isdir)
+        *isdir = false;
+    return type == S_IFREG;
+}
+
+std::string Path::join(std::string path1, std::string path2)
+{
+    path1 = fromNativeSeparators(std::move(path1));
+    path2 = fromNativeSeparators(std::move(path2));
     if (path1.empty() || path2.empty())
         return path1 + path2;
+    // this matches the behavior of std::filesystem::path::operator/=() and os.path.join()
     if (path2.front() == '/')
         return path2;
     return ((path1.back() == '/') ? path1 : (path1 + "/")) + path2;
+}
+
+std::string Path::join(std::string path1, std::string path2, std::string path3)
+{
+    return Path::join(Path::join(std::move(path1), std::move(path2)), std::move(path3));
 }

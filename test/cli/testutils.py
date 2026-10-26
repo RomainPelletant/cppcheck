@@ -2,9 +2,10 @@ import errno
 import logging
 import os
 import select
-import signal
 import subprocess
 import time
+import tempfile
+import json
 
 # Create Cppcheck project file
 import sys
@@ -41,9 +42,24 @@ def create_gui_project_file(project_file, root_path=None, import_project=None, p
         cppcheck_xml += '  </addons>\n'
     cppcheck_xml += '</project>\n'
 
-    f = open(project_file, 'wt')
-    f.write(cppcheck_xml)
-    f.close()
+    with open(project_file, 'wt') as f:
+        f.write(cppcheck_xml)
+
+
+def create_compile_commands(compdb_file, files):
+    compdb = []
+    # TODO: bail out on empty list
+    for f in files:
+        compdb.append(
+            {
+                "file": str(f),
+                "directory": os.path.dirname(f),
+                "command": "gcc -c {}".format(os.path.basename(f))
+            }
+        )
+    compdb_j = json.dumps(compdb)
+    with open(compdb_file, 'wt') as f:
+        f.write(compdb_j)
 
 
 def __lookup_cppcheck_exe():
@@ -78,11 +94,11 @@ def __lookup_cppcheck_exe():
 def __run_subprocess_tty(args, env=None, cwd=None, timeout=None):
     import pty
     mo, so = pty.openpty()
-    me, se = pty.openpty() 
+    me, se = pty.openpty()
     p = subprocess.Popen(args, stdout=so, stderr=se, env=env, cwd=cwd)
     for fd in [so, se]:
         os.close(fd)
-        
+
     select_timeout = 0.04  # seconds
     readable = [mo, me]
     result = {mo: b'', me: b''}
@@ -110,17 +126,17 @@ def __run_subprocess_tty(args, env=None, cwd=None, timeout=None):
         if p.poll() is None:
             p.kill()
         return_code = p.wait()
-        
+
     stdout = result[mo]
-    stderr = result[me]        
+    stderr = result[me]
     return return_code, stdout, stderr
 
-        
+
 def __run_subprocess(args, env=None, cwd=None, timeout=None):
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=cwd)
-    
+
     try:
-        comm = p.communicate(timeout=timeout)
+        stdout, stderr = p.communicate(timeout=timeout)
         return_code = p.returncode
         p = None
     except subprocess.TimeoutExpired:
@@ -142,19 +158,21 @@ def __run_subprocess(args, env=None, cwd=None, timeout=None):
             # sending the signal to the process groups causes the parent Python process to terminate as well
             #os.killpg(os.getpgid(p.pid), signal.SIGTERM)  # Send the signal to all the process groups
             p.terminate()
-            comm = p.communicate()
-            
-    stdout = comm[0]
-    stderr = comm[1]    
+            stdout, stderr = p.communicate()
+            p = None
+
     return return_code, stdout, stderr
 
 
 # Run Cppcheck with args
-def cppcheck(args, env=None, remove_checkers_report=True, cwd=None, cppcheck_exe=None, timeout=None, tty=False):
+def cppcheck_ex(args, env=None, remove_checkers_report=True, cwd=None, cppcheck_exe=None, timeout=None, tty=False):
     exe = cppcheck_exe if cppcheck_exe else __lookup_cppcheck_exe()
     assert exe is not None, 'no cppcheck binary found'
 
-    if 'TEST_CPPCHECK_INJECT_J' in os.environ:
+    # do not inject arguments for calls with exclusive options
+    has_exclusive = bool({'--doc', '--errorlist', '-h', '--help', '--version'} & set(args))
+
+    if not has_exclusive and ('TEST_CPPCHECK_INJECT_J' in os.environ):
         found_j = False
         for arg in args:
             if arg.startswith('-j'):
@@ -164,7 +182,7 @@ def cppcheck(args, env=None, remove_checkers_report=True, cwd=None, cppcheck_exe
             arg_j = '-j' + str(os.environ['TEST_CPPCHECK_INJECT_J'])
             args.append(arg_j)
 
-    if 'TEST_CPPCHECK_INJECT_CLANG' in os.environ:
+    if not has_exclusive and ('TEST_CPPCHECK_INJECT_CLANG' in os.environ):
         found_clang = False
         for arg in args:
             if arg.startswith('--clang'):
@@ -174,7 +192,7 @@ def cppcheck(args, env=None, remove_checkers_report=True, cwd=None, cppcheck_exe
             arg_clang = '--clang=' + str(os.environ['TEST_CPPCHECK_INJECT_CLANG'])
             args.append(arg_clang)
 
-    if 'TEST_CPPCHECK_INJECT_EXECUTOR' in os.environ:
+    if not has_exclusive and ('TEST_CPPCHECK_INJECT_EXECUTOR' in os.environ):
         found_jn = False
         found_executor = False
         for arg in args:
@@ -189,14 +207,30 @@ def cppcheck(args, env=None, remove_checkers_report=True, cwd=None, cppcheck_exe
             arg_executor = '--executor=' + str(os.environ['TEST_CPPCHECK_INJECT_EXECUTOR'])
             args.append(arg_executor)
 
+    builddir_tmp = None
+
+    if not has_exclusive and ('TEST_CPPCHECK_INJECT_BUILDDIR' in os.environ):
+        found_builddir = False
+        for arg in args:
+            if arg.startswith('--cppcheck-build-dir=') or arg == '--no-cppcheck-build-dir':
+                found_builddir = True
+                break
+        if not found_builddir:
+            builddir_tmp = tempfile.TemporaryDirectory(prefix=str(os.environ['TEST_CPPCHECK_INJECT_BUILDDIR']))
+            arg_clang = '--cppcheck-build-dir=' + builddir_tmp.name
+            args.append(arg_clang)
+
     logging.info(exe + ' ' + ' '.join(args))
-    
+
     run_subprocess = __run_subprocess_tty if tty else __run_subprocess
     return_code, stdout, stderr = run_subprocess([exe] + args, env=env, cwd=cwd, timeout=timeout)
-        
+
     stdout = stdout.decode(encoding='utf-8', errors='ignore').replace('\r\n', '\n')
     stderr = stderr.decode(encoding='utf-8', errors='ignore').replace('\r\n', '\n')
-    
+
+    if builddir_tmp:
+        builddir_tmp.cleanup()
+
     if remove_checkers_report:
         if stderr.find('[checkersReport]\n') > 0:
             start_id = stderr.find('[checkersReport]\n')
@@ -211,11 +245,16 @@ def cppcheck(args, env=None, remove_checkers_report=True, cwd=None, cppcheck_exe
                 stderr = ''
             elif stderr[pos - 1] == '\n':
                 stderr = stderr[:pos]
+    return return_code, stdout, stderr, exe
+
+
+def cppcheck(*args, **kwargs):
+    return_code, stdout, stderr, _ = cppcheck_ex(*args, **kwargs)
     return return_code, stdout, stderr
 
 
-def assert_cppcheck(args, ec_exp=None, out_exp=None, err_exp=None, env=None):
-    exitcode, stdout, stderr = cppcheck(args, env)
+def assert_cppcheck(args, ec_exp=None, out_exp=None, err_exp=None, env=None, cwd=None):
+    exitcode, stdout, stderr = cppcheck(args, env=env, cwd=cwd)
     if ec_exp is not None:
         assert exitcode == ec_exp, stdout
     if out_exp is not None:

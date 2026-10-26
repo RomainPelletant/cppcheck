@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,10 +48,10 @@ namespace {
         std::pair<bool, bool> evalCond(const Token* tok) const {
             std::vector<MathLib::bigint> result = analyzer->evaluate(tok);
             // TODO: We should convert to bool
-            const bool checkThen = std::any_of(result.cbegin(), result.cend(), [](int x) {
+            const bool checkThen = std::any_of(result.cbegin(), result.cend(), [](MathLib::bigint x) {
                 return x == 1;
             });
-            const bool checkElse = std::any_of(result.cbegin(), result.cend(), [](int x) {
+            const bool checkElse = std::any_of(result.cbegin(), result.cend(), [](MathLib::bigint x) {
                 return x == 0;
             });
             return std::make_pair(checkThen, checkElse);
@@ -110,8 +110,11 @@ namespace {
         {
             if (Token::simpleMatch(tok->tokAt(-2), "} else {"))
                 tok = tok->linkAt(-2);
-            if (Token::simpleMatch(tok->previous(), ") {"))
-                return tok->previous()->link();
+            if (Token::simpleMatch(tok->previous(), ") {")) {
+                if (Token::simpleMatch(tok->linkAt(-1)->astOperand2(), ";"))
+                    return tok->linkAt(-1)->astOperand2();
+                return tok->linkAt(-1);
+            }
             if (Token::simpleMatch(tok->previous(), "do {"))
                 return tok->previous();
             return tok;
@@ -195,16 +198,19 @@ namespace {
             return nullptr;
         }
 
+        /**
+         * @throws InternalError thrown on cyclic analysis
+         */
         void traverse(Token* start, const Token* end = nullptr) {
             if (start == end)
                 return;
-            std::size_t i = start->index();
+            nonneg int i = start->index();
             for (Token* tok = start->previous(); succeeds(tok, end); tok = tok->previous()) {
                 if (tok->index() >= i)
                     throw InternalError(tok, "Cyclic reverse analysis.");
                 i = tok->index();
-                if (tok == start || (tok->str() == "{" && (tok->scope()->type == Scope::ScopeType::eFunction ||
-                                                           tok->scope()->type == Scope::ScopeType::eLambda))) {
+                if (tok == start || (tok->str() == "{" && (tok->scope()->type == ScopeType::eFunction ||
+                                                           tok->scope()->type == ScopeType::eLambda))) {
                     const Function* f = tok->scope()->function;
                     if (f && f->isConstructor()) {
                         if (const Token* initList = f->constructorMemberInitialization())
@@ -229,7 +235,7 @@ namespace {
                         if (!Token::Match(assignTop->astOperand1(), "%assign%")) {
                             continueB &= updateRecursive(assignTop->astOperand1());
                         }
-                        if (!assignTop->astParent())
+                        if (!assignTop->astParent() || Token::simpleMatch(assignTop->astParent(), ";"))
                             break;
                         assignTop = assignTop->astParent();
                     }
@@ -295,12 +301,12 @@ namespace {
                     if (!condTok)
                         break;
                     Analyzer::Action condAction = analyzeRecursive(condTok);
-                    const bool inLoop = condTok->astTop() && Token::Match(condTok->astTop()->previous(), "for|while (");
+                    if (condAction.isModified())
+                        break;
+                    const bool inLoop = Token::Match(condTok->astTop()->previous(), "for|while (");
                     // Evaluate condition of for and while loops first
                     if (inLoop) {
                         if (Token::findmatch(tok->link(), "goto|break", tok))
-                            break;
-                        if (condAction.isModified())
                             break;
                         valueFlowGenericForward(condTok, analyzer, tokenlist, errorLogger, settings);
                     }
@@ -334,9 +340,6 @@ namespace {
                         valueFlowGenericForward(condTok, analyzer, tokenlist, errorLogger, settings);
                     else if (condAction.isRead())
                         break;
-                    // If the condition modifies the variable then bail
-                    if (condAction.isModified())
-                        break;
                     tok = jumpToStart(tok->link());
                     continue;
                 }
@@ -367,9 +370,9 @@ namespace {
                 }
                 if (tok->str() == "case") {
                     const Scope* scope = tok->scope();
-                    while (scope && scope->type != Scope::eSwitch)
+                    while (scope && scope->type != ScopeType::eSwitch)
                         scope = scope->nestedIn;
-                    if (!scope || scope->type != Scope::eSwitch)
+                    if (!scope || scope->type != ScopeType::eSwitch)
                         break;
                     tok = tok->tokAt(scope->bodyStart->index() - tok->index() - 1);
                     continue;

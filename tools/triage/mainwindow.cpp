@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2021 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -58,13 +58,16 @@
 #include <QTextStream>
 #include <QTreeView>
 #include <QtCore>
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 5, 0))
+#include <QtLogging>
+#endif
 
 class QWidget;
 
-const QString WORK_FOLDER(QDir::homePath() + "/triage");
-const QString DACA2_PACKAGES(QDir::homePath() + "/daca2-packages");
+static const QString WORK_FOLDER(QDir::homePath() + "/triage");
+static const QString DACA2_PACKAGES(QDir::homePath() + "/daca2-packages");
 
-constexpr int MAX_ERRORS = 100;
+static constexpr int MAX_ERRORS = 100;
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -74,10 +77,11 @@ MainWindow::MainWindow(QWidget *parent) :
     srcFiles{"*.cpp", "*.cxx", "*.cc", "*.c++", "*.C", "*.c", "*.cl"}
 {
     ui->setupUi(this);
+    // NOLINTNEXTLINE(bugprone-random-generator-seed) - the random numbers are not used in a security context so this should be sufficient
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
     QDir workFolder(WORK_FOLDER);
     if (!workFolder.exists()) {
-        workFolder.mkdir(WORK_FOLDER);
+        (void)workFolder.mkdir(WORK_FOLDER);
     }
 
     ui->results->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -109,7 +113,7 @@ void MainWindow::loadFile()
     if (fileName.isEmpty())
         return;
     QFile file(fileName);
-    file.open(QIODevice::ReadOnly | QIODevice::Text);
+    (void)file.open(QIODevice::ReadOnly | QIODevice::Text); // TODO: check result
     QTextStream textStream(&file);
     load(textStream);
 }
@@ -133,7 +137,7 @@ void MainWindow::load(QTextStream &textStream)
         QString line = textStream.readLine();
         if (line.isNull())
             break;
-        if (line.startsWith("ftp://") || (line.startsWith(DACA2_PACKAGES) && line.endsWith(".tar.xz"))) {
+        if (line.startsWith("ftp://") || line.startsWith("https://") || (line.startsWith(DACA2_PACKAGES) && line.endsWith(".tar.xz"))) {
             local = line.startsWith(DACA2_PACKAGES) && line.endsWith(".tar.xz");
             url = line;
             if (!errorMessage.isEmpty())
@@ -177,12 +181,12 @@ void MainWindow::refreshResults()
     filter(ui->version->currentText());
 }
 
-void MainWindow::filter(const QString& filter)
+void MainWindow::filter(const QString& filterStr)
 {
     QStringList allErrors;
 
     for (const QString &errorItem : mAllErrors) {
-        if (filter.isEmpty()) {
+        if (filterStr.isEmpty()) {
             allErrors << errorItem;
             continue;
         }
@@ -191,7 +195,7 @@ void MainWindow::filter(const QString& filter)
         if (lines.size() < 2)
             continue;
 
-        if (lines[1].startsWith(filter))
+        if (lines[1].startsWith(filterStr))
             allErrors << errorItem;
     }
 
@@ -289,7 +293,7 @@ void MainWindow::showResult(QListWidgetItem *item)
 {
     ui->statusBar->clearMessage();
     const bool local = item->text().startsWith(DACA2_PACKAGES);
-    if (!item->text().startsWith("ftp://") && !local)
+    if (!item->text().startsWith("ftp://") && !item->text().startsWith("https://") && !local)
         return;
     const QStringList lines = item->text().split("\n");
     if (lines.size() < 2)

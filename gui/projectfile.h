@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include "suppressions.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <utility>
 
@@ -53,7 +54,8 @@ public:
         if (this == mActiveProject) mActiveProject = nullptr;
     }
 
-    enum class CheckLevel {
+    enum class CheckLevel : std::uint8_t {
+        reduced,
         normal,
         exhaustive
     };
@@ -107,6 +109,14 @@ public:
         mCheckUnusedTemplates = b;
     }
 
+    bool getInlineSuppression() const {
+        return mInlineSuppression;
+    }
+
+    void setInlineSuppression(bool b) {
+        mInlineSuppression = b;
+    }
+
     /**
      * @brief Get list of include directories.
      * @return list of directories.
@@ -129,6 +139,14 @@ public:
      */
     const QStringList& getUndefines() const {
         return mUndefines;
+    }
+
+    const QString& getUserInclude() const {
+        return mUserInclude;
+    }
+
+    void setUserInclude(const QString& userInclude) {
+        mUserInclude = userInclude.trimmed();
     }
 
     /**
@@ -171,10 +189,6 @@ public:
         return mPlatform;
     }
 
-    const QString& getProjectName() const {
-        return mProjectName;
-    }
-
     void setProjectName(QString projectName) {
         mProjectName = std::move(projectName);
     }
@@ -215,6 +229,7 @@ public:
     QStringList getAddonsAndTools() const;
 
     bool getClangAnalyzer() const {
+        // TODO
         return false; //mClangAnalyzer;
     }
 
@@ -342,7 +357,9 @@ public:
 
     /** CheckLevel: normal/exhaustive */
     void setCheckLevel(CheckLevel checkLevel);
-    bool isCheckLevelExhaustive() const;
+    CheckLevel getCheckLevel() const {
+        return mCheckLevel;
+    }
 
     /**
      * @brief Set tags.
@@ -387,7 +404,6 @@ public:
         return mCertIntPrecision;
     }
 
-
     /**
      * @brief Write project file (to disk).
      * @param filename Filename to use.
@@ -425,6 +441,23 @@ public:
 
     /** Use Clang parser */
     bool clangParser;
+
+    /** Get paths where we should glob for certain files (dir="cfg"/"platforms"/etc */
+    QStringList getSearchPaths(const QString& dir) const;
+
+    static QStringList getSearchPaths(const QString& projectPath, const QString& appPath, const QString& datadir, const QString& dir);
+
+    /**
+     * @brief Convert an absolute path to a path relative to this project's directory.
+     * If the relative path would need to walk up more than 2 parent folders
+     * (i.e. "../../...") the absolute path is returned unchanged instead.
+     * @param absolutePath Absolute path to convert.
+     */
+    QString getRelativePath(const QString &absolutePath) const;
+
+    /** Set user includes in settings if non-empty */
+    void setSettingsUserIncludes(Settings &settings) const;
+
 
 protected:
 
@@ -558,6 +591,11 @@ private:
     bool mCheckUnusedTemplates;
 
     /**
+     * @brief Enable inline suppression.
+     */
+    bool mInlineSuppression;
+
+    /**
      * @brief List of include directories used to search include files.
      */
     QStringList mIncludeDirs;
@@ -571,6 +609,9 @@ private:
      * @brief List of undefines.
      */
     QStringList mUndefines;
+
+    /** @brief --include file */
+    QString mUserInclude;
 
     /**
      * @brief List of paths to check.

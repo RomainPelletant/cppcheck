@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,23 +37,23 @@ private:
 
 #define createSummaries(...) createSummaries_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    std::string createSummaries_(const char* file, int line, const char (&code)[size], bool cpp = true) {
+    std::string createSummaries_(const char* file, int line, const char (&code)[size]) {
         // tokenize..
         SimpleTokenizer tokenizer(settingsDefault, *this);
-        ASSERT_LOC(tokenizer.tokenize(code, cpp), file, line);
-        return Summaries::create(tokenizer, "");
+        ASSERT_LOC(tokenizer.tokenize(code), file, line);
+        return Summaries::create(tokenizer, "", 0);
     }
 
     void createSummaries1() {
-        ASSERT_EQUALS("foo\n", createSummaries("void foo() {}"));
+        ASSERT_EQUALS("foo\n", createSummaries("void foo() {}\n"));
     }
 
     void createSummariesGlobal() {
-        ASSERT_EQUALS("foo global:[x]\n", createSummaries("int x; void foo() { x=0; }"));
+        ASSERT_EQUALS("foo global:[x]\n", createSummaries("int x; void foo() { x=0; }\n"));
     }
 
     void createSummariesNoreturn() {
-        ASSERT_EQUALS("foo call:[bar] noreturn:[bar]\n", createSummaries("void foo() { bar(); }"));
+        ASSERT_EQUALS("foo call:[bar] noreturn:[bar]\n", createSummaries("void foo() { bar(); }\n"));
     }
 };
 

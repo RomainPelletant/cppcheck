@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,49 +33,52 @@ class ErrorLogger;
 class Function;
 class Settings;
 class Tokenizer;
+class Library;
 
 /** @brief Check for functions never called */
 /// @{
 
 class CPPCHECKLIB CheckUnusedFunctions {
-    friend class TestSuppressions;
-    friend class TestSingleExecutorBase;
-    friend class TestProcessExecutorBase;
-    friend class TestThreadExecutorBase;
-    friend class TestUnusedFunctions;
-
 public:
     CheckUnusedFunctions() = default;
 
     // Parse current tokens and determine..
     // * Check what functions are used
     // * What functions are declared
-    void parseTokens(const Tokenizer &tokenizer, const Settings &settings);
+    void parseTokens(const Tokenizer &tokenizer, const Library &library);
 
-    std::string analyzerInfo() const;
+    std::string analyzerInfo(const Tokenizer &tokenizer) const;
 
     static void analyseWholeProgram(const Settings &settings, ErrorLogger& errorLogger, const std::string &buildDir);
 
     static void getErrorMessages(ErrorLogger &errorLogger) {
-        unusedFunctionError(errorLogger, emptyString, 0, 0, "funcName");
+        unusedFunctionError(errorLogger, "", 0, 0, 0, "funcName");
+        staticFunctionError(errorLogger, "", 0, 0, 0, "funcName");
     }
 
     // Return true if an error is reported.
-    bool check(const Settings& settings, ErrorLogger& errorLogger) const;
+    bool check(const Library& library, ErrorLogger& errorLogger) const;
 
-    void updateFunctionData(const CheckUnusedFunctions& check);
+    void updateFunctionData(const CheckUnusedFunctions& checkUnusedFunctions);
 
 private:
     static void unusedFunctionError(ErrorLogger& errorLogger,
-                                    const std::string &filename, unsigned int fileIndex, unsigned int lineNumber,
+                                    const std::string &filename, nonneg int fileIndex, nonneg int lineNumber, nonneg int column,
+                                    const std::string &funcname);
+
+    static void staticFunctionError(ErrorLogger& errorLogger,
+                                    const std::string &filename, nonneg int fileIndex, nonneg int lineNumber, nonneg int column,
                                     const std::string &funcname);
 
     struct CPPCHECKLIB FunctionUsage {
         std::string filename;
-        unsigned int lineNumber{};
-        unsigned int fileIndex{};
+        nonneg int lineNumber{};
+        nonneg int column{};
+        nonneg int fileIndex{};
         bool usedSameFile{};
         bool usedOtherFile{};
+        bool isC{};
+        bool isStatic{};
     };
 
     std::unordered_map<std::string, FunctionUsage> mFunctions;
@@ -84,7 +87,9 @@ private:
     public:
         explicit FunctionDecl(const Function *f);
         std::string functionName;
-        unsigned int lineNumber;
+        nonneg int fileIndex;
+        nonneg int lineNumber;
+        nonneg int column;
     };
     std::list<FunctionDecl> mFunctionDecl;
     std::set<std::string> mFunctionCalls;

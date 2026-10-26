@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,10 +22,9 @@
 //---------------------------------------------------------------------------
 
 #include "check.h"
+#include "checkimpl.h"
 #include "config.h"
-#include "tokenize.h"
 
-#include <list>
 #include <map>
 #include <string>
 
@@ -35,8 +34,7 @@ class Settings;
 class Token;
 class Type;
 class Variables;
-class Variable;
-class Function;
+class Tokenizer;
 
 /// @addtogroup Checks
 /// @{
@@ -45,58 +43,15 @@ class Function;
 /** @brief Various small checks */
 
 class CPPCHECKLIB CheckUnusedVar : public Check {
-    friend class TestUnusedVar;
-
 public:
     /** @brief This constructor is used when registering the CheckClass */
-    CheckUnusedVar() : Check(myName()) {}
+    CheckUnusedVar() : Check("UnusedVar") {}
 
 private:
-    /** @brief This constructor is used when running checks. */
-    CheckUnusedVar(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
-        : Check(myName(), tokenizer, settings, errorLogger) {}
-
     /** @brief Run checks against the normal token list */
-    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override {
-        CheckUnusedVar checkUnusedVar(&tokenizer, &tokenizer.getSettings(), errorLogger);
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger& errorLogger) override;
 
-        // Coding style checks
-        checkUnusedVar.checkStructMemberUsage();
-        checkUnusedVar.checkFunctionVariableUsage();
-    }
-
-    /** @brief %Check for unused function variables */
-    void checkFunctionVariableUsage_iterateScopes(const Scope* const scope, Variables& variables);
-    void checkFunctionVariableUsage();
-
-    /** @brief %Check that all struct members are used */
-    void checkStructMemberUsage();
-
-    bool isRecordTypeWithoutSideEffects(const Type* type);
-    bool isVariableWithoutSideEffects(const Variable& var, const Type* type = nullptr);
-    bool isEmptyType(const Type* type);
-    bool isFunctionWithoutSideEffects(const Function& func, const Token* functionUsageToken,
-                                      std::list<const Function*> checkedFuncs);
-
-    // Error messages..
-    void unusedStructMemberError(const Token *tok, const std::string &structname, const std::string &varname, const std::string& prefix = "struct");
-    void unusedVariableError(const Token *tok, const std::string &varname);
-    void allocatedButUnusedVariableError(const Token *tok, const std::string &varname);
-    void unreadVariableError(const Token *tok, const std::string &varname, bool modified);
-    void unassignedVariableError(const Token *tok, const std::string &varname);
-
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        CheckUnusedVar c(nullptr, settings, errorLogger);
-        c.unusedVariableError(nullptr, "varname");
-        c.allocatedButUnusedVariableError(nullptr, "varname");
-        c.unreadVariableError(nullptr, "varname", false);
-        c.unassignedVariableError(nullptr, "varname");
-        c.unusedStructMemberError(nullptr, "structname", "variable");
-    }
-
-    static std::string myName() {
-        return "UnusedVar";
-    }
+    void getErrorMessages(ErrorLogger& errorLogger, const Settings &settings) const override;
 
     std::string classInfo() const override {
         return "UnusedVar checks\n"
@@ -108,11 +63,31 @@ private:
                "- unassigned variable\n"
                "- unused struct member\n";
     }
+};
 
-    std::map<const Type *,bool> mIsRecordTypeWithoutSideEffectsMap;
+class CPPCHECKLIB CheckUnusedVarImpl : public CheckImpl {
+public:
+    /** @brief This constructor is used when running checks. */
+    CheckUnusedVarImpl(const Tokenizer *tokenizer, const Settings &settings, ErrorLogger &errorLogger)
+        : CheckImpl(tokenizer, settings, errorLogger) {}
+
+    /** @brief %Check for unused function variables */
+    void checkFunctionVariableUsage_iterateScopes(const Scope* scope, Variables& variables) const;
+    void checkFunctionVariableUsage();
+
+    /** @brief %Check that all struct members are used */
+    void checkStructMemberUsage();
+
+    bool isEmptyType(const Type* type);
+
+    // Error messages..
+    void unusedStructMemberError(const Token *tok, const std::string &structname, const std::string &varname, const std::string& prefix = "struct");
+    void unusedVariableError(const Token *tok, const std::string &varname);
+    void allocatedButUnusedVariableError(const Token *tok, const std::string &varname);
+    void unreadVariableError(const Token *tok, const std::string &varname, bool modified);
+    void unassignedVariableError(const Token *tok, const std::string &varname);
 
     std::map<const Type *,bool> mIsEmptyTypeMap;
-
 };
 /// @}
 //---------------------------------------------------------------------------

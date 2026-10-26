@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,10 +19,11 @@
 #ifndef CPPCHECKLIBRARYDATA_H
 #define CPPCHECKLIBRARYDATA_H
 
+#include <cstdint>
+#include <utility>
+
 #include <QList>
 #include <QMap>
-#include <QPair>
-#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -72,7 +73,7 @@ public:
     struct Function {
         QString comments;
         QString name;
-        enum TrueFalseUnknown { False, True, Unknown } noreturn = Unknown;
+        enum TrueFalseUnknown : std::uint8_t { False, True, Unknown } noreturn = Unknown;
         bool gccPure{};
         bool gccConst{};
         bool leakignore{};
@@ -139,6 +140,7 @@ public:
         struct Alloc {
             bool isRealloc{};
             bool init{};
+            bool noFail{};
             int arg = -1; // -1: Has no optional "realloc-arg" attribute
             int reallocArg = -1; // -1: Has no optional "arg" attribute
             QString bufferSize;
@@ -168,7 +170,7 @@ public:
         QStringList platforms;  // Keeps "type" attribute of each "platform" element
     };
 
-    using TypeChecks = QList<QPair<QString, QString>>;
+    using TypeChecks = QList<std::pair<QString, QString>>;
 
     struct Reflection {
         struct Call {
@@ -226,7 +228,7 @@ public:
         entrypoints.clear();
     }
 
-    void swap(CppcheckLibraryData &other) {
+    void swap(CppcheckLibraryData &other) noexcept {
         containers.swap(other.containers);
         defines.swap(other.defines);
         undefines.swap(other.undefines);

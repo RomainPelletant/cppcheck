@@ -2,34 +2,44 @@
 // Test library configuration for gnu.cfg
 //
 // Usage:
-// $ cppcheck --check-library --library=gnu --enable=style,information --inconclusive --error-exitcode=1 --disable=missingInclude --inline-suppr test/cfg/gnu.c
+// $ cppcheck --check-library --library=gnu --enable=style,information --inconclusive --error-exitcode=1 --inline-suppr test/cfg/gnu.c
 // =>
 // No warnings about bad library configuration, unmatched suppressions, etc. exitcode=0
 //
 
-// cppcheck-suppress-file valueFlowBailout
+// cppcheck-suppress-file [valueFlowBailout,purgedConfiguration]
+
+#define _GNU_SOURCE
 
 #include <string.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <netdb.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <pwd.h>
 #include <sys/mman.h>
 #include <sys/sem.h>
 #include <wchar.h>
-#if !defined(__CYGWIN__) && !(defined(__APPLE__) && defined(__MACH__))
+#include <execinfo.h>
+#if !defined(__CYGWIN__) && !defined(__APPLE__)
 #include <sys/epoll.h>
 #endif
 #include <strings.h>
 #ifdef __gnu_linux__
 #include <error.h>
 #endif
+#include <unistd.h>
 #include <getopt.h>
 #include <netdb.h>
+#if !defined(__APPLE__)
+#include <byteswap.h>
+#include <features.h>
+#endif
+#include <sys/socket.h>
+#include <time.h>
+#include <stddef.h>
 
 #ifdef __gnu_linux__
 void unreachableCode_error(void) // #11197
@@ -40,6 +50,43 @@ void unreachableCode_error(void) // #11197
     int i;
 }
 #endif
+
+
+int deallocuse_backtrace(int size) {
+    void **buffer = (void **)malloc(sizeof(void *) * size);
+    free(buffer);
+    // cppcheck-suppress deallocuse
+    // cppcheck-suppress nullPointerOutOfMemory
+    int numEntries = backtrace(buffer, size);
+    return numEntries;
+}
+
+#if !defined(__APPLE__)
+void leakReturnValNotUsed_get_current_dir_name(void)
+{
+    // cppcheck-suppress leakReturnValNotUsed
+    get_current_dir_name();
+}
+
+void memleak_get_current_dir_name0(void)
+{
+    const char *const name = get_current_dir_name();
+    if (name)
+    {
+        // cppcheck-suppress memleak
+        return;
+    }
+}
+
+void memleak_get_current_dir_name1(void)
+{
+    const char *const name = get_current_dir_name();
+    if (name)
+    {
+        free(name);
+        return;
+    }
+}
 
 int nullPointer_gethostbyname2_r(const char* name, int af, struct hostent* ret, const char* buf, size_t buflen, struct hostent** result, const int* h_errnop)
 {
@@ -71,7 +118,6 @@ int nullPointer_gethostbyname_r(const char* name, struct hostent* ret, const cha
     return gethostbyname_r(name, ret, buf, buflen, result, h_errnop);
 }
 
-
 int nullPointer_gethostbyaddr_r(const void* addr, socklen_t len, int type, struct hostent* ret, const char* buf, size_t buflen, struct hostent** result, const int* h_errnop)
 {
     // cppcheck-suppress nullPointer
@@ -86,6 +132,7 @@ int nullPointer_gethostbyaddr_r(const void* addr, socklen_t len, int type, struc
     (void) gethostbyaddr_r(addr, len, type, ret, buf, buflen, result, NULL);
     return gethostbyaddr_r(addr, len, type, ret, buf, buflen, result, h_errnop);
 }
+#endif
 
 int nullPointer_getopt_long(int argc, char **argv, const char *optstring,
                             const struct option *longopts, int *longindex)
@@ -111,6 +158,133 @@ int nullPointer_getopt_long_only(int argc, char* const* argv, const char* optstr
     return getopt_long_only(argc, argv, optstring, longopts, longindex);
 }
 
+bool nullPointer_builtin_add_overflow(char a, char b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_add_overflow(a, b, (char *)0);
+}
+
+bool nullPointer_builtin_sadd_overflow(int a, int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_sadd_overflow(a, b, (int *)0);
+}
+
+bool nullPointer_builtin_saddl_overflow(long int a, long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_saddl_overflow(a, b, (long int *)0);
+}
+
+bool nullPointer_builtin_saddll_overflow(long long int a, long long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_saddll_overflow(a, b, (long long int *)0);
+}
+
+bool nullPointer_builtin_uadd_overflow(unsigned int a, unsigned int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_uadd_overflow(a, b, (unsigned int *)0);
+}
+
+bool nullPointer_builtin_uaddl_overflow(unsigned long int a, unsigned long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_uaddl_overflow(a, b, (unsigned long int *)0);
+}
+
+bool nullPointer_builtin_uaddll_overflow(unsigned long long int a, unsigned long long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_uaddll_overflow(a, b, (unsigned long long int *)0);
+}
+
+bool nullPointer_builtin_sub_overflow(char a, char b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_sub_overflow(a, b, (char *)0);
+}
+
+bool nullPointer_builtin_ssub_overflow(int a, int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_ssub_overflow(a, b, (int *)0);
+}
+
+bool nullPointer_builtin_ssubl_overflow(long int a, long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_ssubl_overflow(a, b, (long int *)0);
+}
+
+bool nullPointer_builtin_ssubll_overflow(long long int a, long long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_ssubll_overflow(a, b, (long long int *)0);
+}
+
+bool nullPointer_builtin_usub_overflow(unsigned int a, unsigned int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_usub_overflow(a, b, (unsigned int *)0);
+}
+
+bool nullPointer_builtin_usubl_overflow(unsigned long int a, unsigned long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_usubl_overflow(a, b, (unsigned long int *)0);
+}
+
+bool nullPointer_builtin_usubll_overflow(unsigned long long int a, unsigned long long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_usubll_overflow(a, b, (unsigned long long int *)0);
+}
+
+bool nullPointer_builtin_mul_overflow(char a, char b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_mul_overflow(a, b, (char *)0);
+}
+
+bool nullPointer_builtin_smul_overflow(int a, int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_smul_overflow(a, b, (int *)0);
+}
+
+bool nullPointer_builtin_smull_overflow(long int a, long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_smull_overflow(a, b, (long int *)0);
+}
+
+bool nullPointer_builtin_smulll_overflow(long long int a, long long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_smulll_overflow(a, b, (long long int *)0);
+}
+
+bool nullPointer_builtin_umul_overflow(unsigned int a, unsigned int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_umul_overflow(a, b, (unsigned int *)0);
+}
+
+bool nullPointer_builtin_umull_overflow(unsigned long int a, unsigned long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_umull_overflow(a, b, (unsigned long int *)0);
+}
+
+bool nullPointer_builtin_umulll_overflow(unsigned long long int a, unsigned long long int b)
+{
+    // cppcheck-suppress nullPointer
+    return __builtin_umulll_overflow(a, b, (unsigned long long int *)0);
+}
+
+#if !defined(__APPLE__)
 int nullPointer_getservent_r(struct servent *restrict result_buf, const char *restrict buf, size_t buflen, struct servent **restrict result)
 {
     // cppcheck-suppress nullPointer
@@ -130,6 +304,7 @@ void *bufferAccessOutOfBounds_memrchr(const void *s, int c, size_t n)
     (void)memrchr(buf,c,43);
     return memrchr(s,c,n);
 }
+#endif
 
 void knownConditionTrueFalse_ffsl(long i)
 {
@@ -149,6 +324,32 @@ void knownConditionTrueFalse_ffsll(long long i)
     if (ffsll(i) == 0) {}
 }
 
+int uninitvar_popcount() {
+    unsigned int a;
+    // cppcheck-suppress uninitvar
+    int b = __builtin_popcount(a); // popcount requires init arg
+    return b;
+}
+
+int invalidFunctionArg_clz() {
+    // cppcheck-suppress invalidFunctionArg
+    return __builtin_clz(0);
+}
+
+int invalidFunctionArgBool_ctzg(unsigned int a, unsigned int b) {
+    // cppcheck-suppress invalidFunctionArgBool
+    return __builtin_ctzg(a, a % b == 0);
+}
+
+#if __GNUC__ > 14
+int ignoredReturnValue_stdc_width(size_t n) {
+    // cppcheck-suppress ignoredReturnValue
+    __builtin_stdc_bit_width(n);
+    return 0;
+}
+#endif
+
+#if !defined(__APPLE__)
 int nullPointer_semtimedop(int semid, struct sembuf *sops, size_t nsops, const struct timespec *timeout)
 {
     (void) semtimedop(semid, sops, nsops, NULL); // If the timeout argument is NULL, then semtimedop() behaves exactly like semop().
@@ -175,6 +376,13 @@ wchar_t *nullPointer_wmempcpy(wchar_t *dest, const wchar_t *src, size_t n)
     return wmempcpy(dest,src,n);
 }
 
+void bufferAccessOutOfBounds_wmempcpy(const wchar_t *src)
+{
+    wchar_t buf[3];
+    // cppcheck-suppress bufferAccessOutOfBounds
+    wmempcpy(buf, src, 5);
+}
+
 int uninitvar_getpw(uid_t uid, char *buf)
 {
     uid_t someUid;
@@ -184,8 +392,10 @@ int uninitvar_getpw(uid_t uid, char *buf)
     // cppcheck-suppress uninitvar
     return getpw(someUid, buf);
 }
+#endif
 
 // Declaration necessary because there is no specific / portable header.
+// https://www.eyrie.org/~eagle/software/rra-c-util/xmalloc.html
 extern void *xcalloc(size_t nmemb, size_t size);
 extern void *xmalloc(size_t size);
 extern void *xrealloc(void *block, size_t newsize);
@@ -251,8 +461,10 @@ void valid_code(int argInt1, va_list valist_arg, const int * parg)
 
     if (__builtin_expect(argInt1, 0)) {}
     if (__builtin_expect_with_probability(argInt1 + 1, 2, 0.5)) {}
+#ifdef __GLIBC__
     if (__glibc_unlikely(argInt1 != 0)) {}
     if (__glibc_likely(parg != NULL)) {}
+#endif
     const void *ax1 = __builtin_assume_aligned(parg, 16);
     printf("%p", ax1);
     const void *ax2 = __builtin_assume_aligned(parg, 32, 8);
@@ -289,6 +501,7 @@ void valid_code(int argInt1, va_list valist_arg, const int * parg)
     // cppcheck-suppress valueFlowBailoutIncompleteVar
     const void * p_mmap = mmap(NULL, 1, PROT_NONE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
     printf("%p", p_mmap);
+    // cppcheck-suppress nullPointerOutOfMemory
     munmap(p_mmap, 1);
 
     uint16_t i16_1 = 0, i16_2;
@@ -301,6 +514,7 @@ void valid_code(int argInt1, va_list valist_arg, const int * parg)
     // cppcheck-suppress unreadVariable
     i64_2 = __builtin_bswap64(i64_1++);
 
+#if !defined(__APPLE__)
     // cppcheck-suppress zerodiv
     // cppcheck-suppress unreadVariable
     i16_1 /= bswap_16(0x1234) - 0x3412;
@@ -310,6 +524,7 @@ void valid_code(int argInt1, va_list valist_arg, const int * parg)
     // cppcheck-suppress zerodiv
     // cppcheck-suppress unreadVariable
     i64_1 /= bswap_64(0x023456789abcde0f) - 0x0fdebc9a78563402;
+#endif
 }
 
 void ignoreleak(void)
@@ -383,6 +598,7 @@ void memleak_asprintf8(const char *fmt, const int arg) // #12204
 void memleak_xmalloc()
 {
     char *p = (char*)xmalloc(10);
+    // cppcheck-suppress nullPointerOutOfMemory
     p[9] = 0;
     // cppcheck-suppress memleak
 }
@@ -404,6 +620,216 @@ void uninitvar__builtin_memset(void)
     (void)__builtin_memset(s,c,n);
 }
 
+void uninitvar__builtin_add_overflow(void)
+{
+    char a;
+    char b;
+    char c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_add_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_sadd_overflow(void)
+{
+    int a;
+    int b;
+    int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_sadd_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_saddl_overflow(void)
+{
+    long int a;
+    long int b;
+    long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_saddl_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_saddll_overflow(void)
+{
+    long long int a;
+    long long int b;
+    long long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_saddll_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_uadd_overflow(void)
+{
+    unsigned int a;
+    unsigned int b;
+    unsigned int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_uadd_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_uaddl_overflow(void)
+{
+    unsigned long int a;
+    unsigned long int b;
+    unsigned long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_uaddl_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_uaddll_overflow(void)
+{
+    unsigned long long int a;
+    unsigned long long int b;
+    unsigned long long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_uaddll_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_sub_overflow(void)
+{
+    char a;
+    char b;
+    char c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_sub_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_ssub_overflow(void)
+{
+    int a;
+    int b;
+    int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_ssub_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_ssubl_overflow(void)
+{
+    long int a;
+    long int b;
+    long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_ssubl_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_ssubll_overflow(void)
+{
+    long long int a;
+    long long int b;
+    long long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_ssubll_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_usub_overflow(void)
+{
+    unsigned int a;
+    unsigned int b;
+    unsigned int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_usub_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_usubl_overflow(void)
+{
+    unsigned long int a;
+    unsigned long int b;
+    unsigned long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_usubl_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_usubll_overflow(void)
+{
+    unsigned long long int a;
+    unsigned long long int b;
+    unsigned long long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_usubll_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_mul_overflow(void)
+{
+    char a;
+    char b;
+    char c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_mul_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_smul_overflow(void)
+{
+    int a;
+    int b;
+    int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_smul_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_smull_overflow(void)
+{
+    long int a;
+    long int b;
+    long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_smull_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_smulll_overflow(void)
+{
+    long long int a;
+    long long int b;
+    long long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_smulll_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_umul_overflow(void)
+{
+    unsigned int a;
+    unsigned int b;
+    unsigned int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_umul_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_umull_overflow(void)
+{
+    unsigned long int a;
+    unsigned long int b;
+    unsigned long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_umull_overflow(a, b, &c);
+}
+
+void uninitvar__builtin_umulll_overflow(void)
+{
+    unsigned long long int a;
+    unsigned long long int b;
+    unsigned long long int c;
+
+    // cppcheck-suppress uninitvar
+    (void)__builtin_umulll_overflow(a, b, &c);
+}
+
 void bufferAccessOutOfBounds__builtin_memset(void)
 {
     uint8_t buf[42];
@@ -420,14 +846,18 @@ void bufferAccessOutOfBounds()
     sethostname(buf, 4);
 
     char * pAlloc1 = xcalloc(2, 4);
+    // cppcheck-suppress nullPointerOutOfMemory
     memset(pAlloc1, 0, 8);
     // cppcheck-suppress bufferAccessOutOfBounds
+    // cppcheck-suppress nullPointerOutOfMemory
     memset(pAlloc1, 0, 9);
     free(pAlloc1);
 
     char * pAlloc2 = xmalloc(4);
+    // cppcheck-suppress nullPointerOutOfMemory
     memset(pAlloc2, 0, 4);
     // cppcheck-suppress bufferAccessOutOfBounds
+    // cppcheck-suppress nullPointerOutOfMemory
     memset(pAlloc2, 0, 5);
 
     pAlloc2 = xrealloc(pAlloc2, 10);
@@ -438,6 +868,7 @@ void bufferAccessOutOfBounds()
     free(pAlloc2);
 }
 
+#if !defined(__APPLE__)
 void leakReturnValNotUsed()
 {
     // cppcheck-suppress [unreadVariable, constVariablePointer]
@@ -457,8 +888,9 @@ void leakReturnValNotUsed()
     if (42 == __builtin_expect(42, 0))
         return;
 }
+#endif
 
-#if !defined(__CYGWIN__) && !(defined(__APPLE__) && defined(__MACH__))
+#if !defined(__CYGWIN__) && !defined(__APPLE__)
 int nullPointer_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
 {
     // no warning is expected

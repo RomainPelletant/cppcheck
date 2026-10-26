@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,15 @@ class QWidget;
 namespace Ui {
     class ProjectFile;
 }
+
+extern const char ADDON_MISRA[];
+extern const char CODING_STANDARD_MISRA_C_2023[];
+extern const char CODING_STANDARD_MISRA_C_2025[];
+extern const char CODING_STANDARD_MISRA_CPP_2008[];
+extern const char CODING_STANDARD_MISRA_CPP_2023[];
+extern const char CODING_STANDARD_CERT_C[];
+extern const char CODING_STANDARD_CERT_CPP[];
+extern const char CODING_STANDARD_AUTOSAR[];
 
 /// @addtogroup GUI
 /// @{
@@ -172,7 +181,7 @@ private:
      */
     void setSuppressions(const QList<SuppressionList::Suppression> &suppressions);
 
-protected slots:
+private slots:
 
     /** ok button pressed, save changes and accept */
     void ok();
@@ -191,6 +200,11 @@ protected slots:
      * @brief Browse for solution / project / compile database.
      */
     void browseImportProject();
+
+    /**
+     * @brief Browse for include file
+     */
+    void browseUserInclude();
 
     /**
      * @brief Add new path to check.
@@ -266,7 +280,7 @@ protected slots:
     /**
      * @brief Edit suppression (double clicking on suppression)
      */
-    void editSuppression(const QModelIndex &index);
+    void editSuppression(const QModelIndex& /*index*/);
 
     /**
      * @brief Browse for misra file
@@ -319,15 +333,15 @@ protected:
 private:
     static QStringList getProjectConfigs(const QString &fileName);
 
-    Ui::ProjectFile *mUI;
+    Ui::ProjectFile * const mUI;
 
     /**
      * @brief Projectfile path.
      */
-    ProjectFile *mProjectFile;
+    ProjectFile * const mProjectFile;
 
     /** Is this Cppcheck Premium? */
-    bool mPremium;
+    const bool mPremium;
 
     QString getExistingDirectory(const QString &caption, bool trailingSlash);
 

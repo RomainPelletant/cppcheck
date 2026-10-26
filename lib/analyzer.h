@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,8 @@
 
 #include "config.h"
 #include "mathlib.h"
+
+#include <cstdint>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -34,7 +36,7 @@ struct Analyzer {
 
         Action() = default;
         Action(const Action&) = default;
-        Action& operator=(const Action& rhs) = default;
+        Action& operator=(const Action& rhs) & = default;
 
         template<class T,
                  REQUIRES("T must be convertible to unsigned int", std::is_convertible<T, unsigned int> ),
@@ -43,7 +45,7 @@ struct Analyzer {
         Action(T f) : mFlag(f) // cppcheck-suppress noExplicitConstructor
         {}
 
-        enum {
+        enum : std::uint16_t {
             None = 0,
             Read = (1 << 0),
             Write = (1 << 1),
@@ -130,7 +132,7 @@ struct Analyzer {
         unsigned int mFlag{};
     };
 
-    enum class Terminate { None, Bail, Escape, Modified, Inconclusive, Conditional };
+    enum class Terminate : std::uint8_t { None, Bail, Escape, Modified, Inconclusive, Conditional };
 
     struct Result {
         explicit Result(Action action = Action::None, Terminate terminate = Terminate::None)
@@ -146,18 +148,22 @@ struct Analyzer {
         }
     };
 
-    enum class Direction { Forward, Reverse };
+    enum class Direction : std::uint8_t { Forward, Reverse };
 
     struct Assume {
-        enum Flags {
+        enum Flags : std::uint8_t {
             None = 0,
-            Quiet = (1 << 0),
-            Absolute = (1 << 1),
-            ContainerEmpty = (1 << 2),
+            Quiet = (1u << 0),
+            Absolute = (1u << 1),
+            ContainerEmpty = (1u << 2),
+            // The branch this condition guards is not traversed yet (a separate path walks it), so
+            // the assume must not record the program state at the branch boundaries - they would be
+            // premature. When unset, the branch has been traversed and control is leaving it.
+            Pending = (1u << 3),
         };
     };
 
-    enum class Evaluate { Integral, ContainerEmpty };
+    enum class Evaluate : std::uint8_t { Integral, ContainerEmpty };
 
     /// Analyze a token
     virtual Action analyze(const Token* tok, Direction d) const = 0;
@@ -184,7 +190,7 @@ struct Analyzer {
     /// Update the state of the program at the token
     virtual void updateState(const Token* tok) = 0;
     /// Return analyzer for expression at token
-    virtual ValuePtr<Analyzer> reanalyze(Token* tok, const std::string& msg = emptyString) const = 0;
+    virtual ValuePtr<Analyzer> reanalyze(Token* tok, const std::string& msg = "") const = 0;
     virtual bool invalid() const {
         return false;
     }

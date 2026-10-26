@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,14 +39,9 @@
 // CWE ids used
 static const CWE CWE398(398U);   // Indicator of Poor Code Quality
 
-// Register this check class (by creating a static instance of it)
-namespace {
-    CheckAssert instance;
-}
-
-void CheckAssert::assertWithSideEffects()
+void CheckAssertImpl::assertWithSideEffects()
 {
-    if (!mSettings->severity.isEnabled(Severity::warning))
+    if (!mSettings.severity.isEnabled(Severity::warning))
         return;
 
     logChecker("CheckAssert::assertWithSideEffects"); // warning
@@ -55,7 +50,7 @@ void CheckAssert::assertWithSideEffects()
         if (!Token::simpleMatch(tok, "assert ("))
             continue;
 
-        const Token *endTok = tok->next()->link();
+        const Token *endTok = tok->linkAt(1);
         for (const Token* tmp = tok->next(); tmp != endTok; tmp = tmp->next()) {
             if (Token::simpleMatch(tmp, "sizeof ("))
                 tmp = tmp->linkAt(1);
@@ -63,7 +58,7 @@ void CheckAssert::assertWithSideEffects()
             checkVariableAssignment(tmp, tok->scope());
 
             if (tmp->tokType() != Token::eFunction) {
-                if (const Library::Function* f = mSettings->library.getFunction(tmp)) {
+                if (const Library::Function* f = mSettings.library.getFunction(tmp)) {
                     if (f->isconst || f->ispure)
                         continue;
                     if (Library::getContainerYield(tmp->next()) != Library::Container::Yield::NO_YIELD) // bailout, assume read access
@@ -78,17 +73,22 @@ void CheckAssert::assertWithSideEffects()
                         f->containerYield == Library::Container::Yield::END_ITERATOR ||
                         f->containerYield == Library::Container::Yield::ITERATOR)
                         continue;
-                    sideEffectInAssertError(tmp, mSettings->library.getFunctionName(tmp));
+                    sideEffectInAssertError(tmp, mSettings.library.getFunctionName(tmp));
                 }
                 continue;
             }
 
+            const Token* parent = tmp->astParent();
+            while (Token::Match(parent, ".|::"))
+                parent = parent->astParent();
+            if (!Token::simpleMatch(parent, "("))
+                continue;
             const Function* f = tmp->function();
             const Scope* scope = f->functionScope;
             if (!scope) {
                 // guess that const method doesn't have side effects
                 if (f->nestedIn->isClassOrStruct() && !f->isConst() && !f->isStatic())
-                    sideEffectInAssertError(tmp, f->name()); // Non-const member function called, assume it has side effects
+                    sideEffectInAssertError(tmp, f->name(), " If there are no side effects, consider declaring the method const."); // Non-const member function called, assume it has side effects
                 continue;
             }
 
@@ -122,19 +122,19 @@ void CheckAssert::assertWithSideEffects()
 //---------------------------------------------------------------------------
 
 
-void CheckAssert::sideEffectInAssertError(const Token *tok, const std::string& functionName)
+void CheckAssertImpl::sideEffectInAssertError(const Token *tok, const std::string& functionName, const std::string &extra)
 {
     reportError(tok, Severity::warning,
                 "assertWithSideEffect",
                 "$symbol:" + functionName + "\n"
-                "Assert statement calls a function which may have desired side effects: '$symbol'.\n"
+                "Assert statement calls a function which may have desired side effects: '$symbol'." + extra + "\n"
                 "Non-pure function: '$symbol' is called inside assert statement. "
                 "Assert statements are removed from release builds so the code inside "
                 "assert statement is not executed. If the code is needed also in release "
                 "builds, this is a bug.", CWE398, Certainty::normal);
 }
 
-void CheckAssert::assignmentInAssertError(const Token *tok, const std::string& varname)
+void CheckAssertImpl::assignmentInAssertError(const Token *tok, const std::string& varname)
 {
     reportError(tok, Severity::warning,
                 "assignmentInAssert",
@@ -147,11 +147,13 @@ void CheckAssert::assignmentInAssertError(const Token *tok, const std::string& v
 }
 
 // checks if side effects happen on the variable prior to tmp
-void CheckAssert::checkVariableAssignment(const Token* assignTok, const Scope *assertionScope)
+void CheckAssertImpl::checkVariableAssignment(const Token* assignTok, const Scope *assertionScope)
 {
     if (!assignTok->isAssignmentOp() && assignTok->tokType() != Token::eIncDecOp)
         return;
 
+    if (!assignTok->astOperand1())
+        return;
     const Variable* var = assignTok->astOperand1()->variable();
     if (!var)
         return;
@@ -175,8 +177,21 @@ void CheckAssert::checkVariableAssignment(const Token* assignTok, const Scope *a
     // TODO: function calls on var
 }
 
-bool CheckAssert::inSameScope(const Token* returnTok, const Token* assignTok)
+bool CheckAssertImpl::inSameScope(const Token* returnTok, const Token* assignTok)
 {
     // TODO: even if a return is in the same scope, the assignment might not affect it.
     return returnTok->scope() == assignTok->scope();
+}
+
+void CheckAssert::runChecks(const Tokenizer &tokenizer, ErrorLogger& errorLogger)
+{
+    CheckAssertImpl checkAssert(&tokenizer, tokenizer.getSettings(), errorLogger);
+    checkAssert.assertWithSideEffects();
+}
+
+void CheckAssert::getErrorMessages(ErrorLogger& errorLogger, const Settings &settings) const
+{
+    CheckAssertImpl c(nullptr, settings, errorLogger);
+    c.sideEffectInAssertError(nullptr, "function");
+    c.assignmentInAssertError(nullptr, "var");
 }

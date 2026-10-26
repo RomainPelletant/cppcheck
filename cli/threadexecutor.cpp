@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,15 +18,16 @@
 
 #include "threadexecutor.h"
 
+#ifdef HAS_THREADING_MODEL_THREAD
+
 #include "config.h"
 #include "cppcheck.h"
 #include "errorlogger.h"
 #include "filesettings.h"
 #include "settings.h"
-#include "timer.h"
+#include "suppressions.h"
 
 #include <cassert>
-#include <cstddef>
 #include <cstdlib>
 #include <future>
 #include <iostream>
@@ -38,10 +39,8 @@
 #include <utility>
 #include <vector>
 
-enum class Color;
-
-ThreadExecutor::ThreadExecutor(const std::list<FileWithDetails> &files, const std::list<FileSettings>& fileSettings, const Settings &settings, SuppressionList &suppressions, ErrorLogger &errorLogger, CppCheck::ExecuteCmdFn executeCommand)
-    : Executor(files, fileSettings, settings, suppressions, errorLogger)
+ThreadExecutor::ThreadExecutor(const std::list<FileWithDetails> &files, const std::list<FileSettings>& fileSettings, const Settings &settings, Suppressions &suppressions, ErrorLogger &errorLogger, TimerResults* timerResults, CppCheck::ExecuteCmdFn executeCommand)
+    : Executor(files, fileSettings, settings, suppressions, errorLogger, timerResults)
     , mExecuteCommand(std::move(executeCommand))
 {
     assert(mSettings.jobs > 1);
@@ -68,6 +67,11 @@ public:
         mErrorLogger.reportErr(msg);
     }
 
+    void reportMetric(const std::string &metric) override {
+        std::lock_guard<std::mutex> lg(mReportSync);
+        mErrorLogger.reportMetric(metric);
+    }
+
     void reportStatus(std::size_t fileindex, std::size_t filecount, std::size_t sizedone, std::size_t sizetotal) {
         std::lock_guard<std::mutex> lg(mReportSync);
         mThreadExecutor.reportStatus(fileindex, filecount, sizedone, sizetotal);
@@ -82,8 +86,8 @@ private:
 class ThreadData
 {
 public:
-    ThreadData(ThreadExecutor &threadExecutor, ErrorLogger &errorLogger, const Settings &settings, const std::list<FileWithDetails> &files, const std::list<FileSettings> &fileSettings, CppCheck::ExecuteCmdFn executeCommand)
-        : mFiles(files), mFileSettings(fileSettings), mSettings(settings), mExecuteCommand(std::move(executeCommand)), logForwarder(threadExecutor, errorLogger)
+    ThreadData(ThreadExecutor &threadExecutor, ErrorLogger &errorLogger, TimerResults *timerResults, const Settings &settings, Suppressions& supprs, const std::list<FileWithDetails> &files, const std::list<FileSettings> &fileSettings, CppCheck::ExecuteCmdFn executeCommand)
+        : mFiles(files), mFileSettings(fileSettings), mTimerResults(timerResults), mSettings(settings), mSuppressions(supprs), mExecuteCommand(std::move(executeCommand)), mLogForwarder(threadExecutor, errorLogger)
     {
         mItNextFile = mFiles.begin();
         mItNextFileSettings = mFileSettings.begin();
@@ -94,10 +98,10 @@ public:
         });
     }
 
-    bool next(const std::string *&file, const FileSettings *&fs, std::size_t &fileSize) {
+    bool next(const FileWithDetails *&file, const FileSettings *&fs, std::size_t &fileSize) {
         std::lock_guard<std::mutex> l(mFileSync);
         if (mItNextFile != mFiles.end()) {
-            file = &mItNextFile->path();
+            file = &(*mItNextFile);
             fs = nullptr;
             fileSize = mItNextFile->size();
             ++mItNextFile;
@@ -114,20 +118,33 @@ public:
         return false;
     }
 
-    unsigned int check(ErrorLogger &errorLogger, const std::string *file, const FileSettings *fs) const {
-        CppCheck fileChecker(errorLogger, false, mExecuteCommand);
-        fileChecker.settings() = mSettings; // this is a copy
+    unsigned int check(const FileWithDetails *file, const FileSettings *fs) {
+        CppCheck fileChecker(mSettings, mSuppressions, mLogForwarder, mTimerResults, false, mExecuteCommand);
 
         unsigned int result;
         if (fs) {
             // file settings..
             result = fileChecker.check(*fs);
-            if (fileChecker.settings().clangTidy)
-                fileChecker.analyseClangTidy(*fs);
         } else {
             // Read file from a file
             result = fileChecker.check(*file);
-            // TODO: call analyseClangTidy()?
+        }
+        for (const auto& suppr : mSuppressions.nomsg.getSuppressions()) {
+            // need to transfer all inline suppressions because these are used later on
+            if (suppr.isInline) {
+                const std::string err = mSuppressions.nomsg.addSuppression(suppr);
+                if (!err.empty()) {
+                    // TODO: only update state if it doesn't exist - otherwise propagate error
+                    mSuppressions.nomsg.updateSuppressionState(suppr); // TODO: check result
+                }
+                continue;
+            }
+
+            // propagate state of global suppressions
+            if (!suppr.isLocal()) {
+                mSuppressions.nomsg.updateSuppressionState(suppr); // TODO: check result
+                continue;
+            }
         }
         return result;
     }
@@ -137,7 +154,7 @@ public:
         mProcessedSize += fileSize;
         mProcessedFiles++;
         if (!mSettings.quiet)
-            logForwarder.reportStatus(mProcessedFiles, mTotalFiles, mProcessedSize, mTotalFileSize);
+            mLogForwarder.reportStatus(mProcessedFiles, mTotalFiles, mProcessedSize, mTotalFileSize);
     }
 
 private:
@@ -152,23 +169,24 @@ private:
     std::size_t mTotalFileSize{};
 
     std::mutex mFileSync;
+    TimerResults *mTimerResults;
     const Settings &mSettings;
+    Suppressions &mSuppressions;
     CppCheck::ExecuteCmdFn mExecuteCommand;
 
-public:
-    SyncLogForwarder logForwarder;
+    SyncLogForwarder mLogForwarder;
 };
 
 static unsigned int STDCALL threadProc(ThreadData *data)
 {
     unsigned int result = 0;
 
-    const std::string *file;
+    const FileWithDetails *file;
     const FileSettings *fs;
     std::size_t fileSize;
 
     while (data->next(file, fs, fileSize)) {
-        result += data->check(data->logForwarder, file, fs);
+        result += data->check(file, fs);
 
         data->status(fileSize);
     }
@@ -181,7 +199,7 @@ unsigned int ThreadExecutor::check()
     std::vector<std::future<unsigned int>> threadFutures;
     threadFutures.reserve(mSettings.jobs);
 
-    ThreadData data(*this, mErrorLogger, mSettings, mFiles, mFileSettings, mExecuteCommand);
+    ThreadData data(*this, mErrorLogger, mTimerResults, mSettings, mSuppressions, mFiles, mFileSettings, mExecuteCommand);
 
     for (unsigned int i = 0; i < mSettings.jobs; ++i) {
         try {
@@ -197,8 +215,7 @@ unsigned int ThreadExecutor::check()
         return v + f.get();
     });
 
-    if (mSettings.showtime == SHOWTIME_MODES::SHOWTIME_SUMMARY || mSettings.showtime == SHOWTIME_MODES::SHOWTIME_TOP5_SUMMARY)
-        CppCheck::printTimerResults(mSettings.showtime);
-
     return result;
 }
+
+#endif // HAS_THREADING_MODEL_THREAD

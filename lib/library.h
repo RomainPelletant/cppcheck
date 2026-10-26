@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,18 +25,18 @@
 #include "mathlib.h"
 #include "standards.h"
 
+#include <array>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
-#include <utility>
 #include <vector>
 
 class Token;
-class Settings;
-enum class Severity;
+class Settings; // TODO: remove dependency on settings
+enum class Severity : std::uint8_t;
 
 namespace tinyxml2 {
     class XMLDocument;
@@ -52,10 +52,16 @@ namespace tinyxml2 {
 class CPPCHECKLIB Library {
     friend struct LibraryHelper; // for testing
 
-public:
-    Library() = default;
+    static const std::string mEmptyString;
 
-    enum class ErrorCode {
+public:
+    Library();
+    ~Library();
+
+    Library(const Library& other);
+    Library& operator=(const Library& other) &;
+
+    enum class ErrorCode : std::uint8_t {
         OK,
         FILE_NOT_FOUND, BAD_XML, UNKNOWN_ELEMENT, MISSING_ATTRIBUTE, BAD_ATTRIBUTE_VALUE,
         UNSUPPORTED_FORMAT, DUPLICATE_PLATFORM_TYPE, PLATFORM_TYPE_REDEFINED, DUPLICATE_DEFINE
@@ -71,17 +77,18 @@ public:
         std::string reason;
     };
 
-    Error load(const char exename[], const char path[]);
+    Error load(const char exename[], const char path[], bool debug = false);
 
     struct AllocFunc {
-        int groupId;
-        int arg;
-        enum class BufferSize {none,malloc,calloc,strdup};
-        BufferSize bufferSize;
-        int bufferSizeArg1;
-        int bufferSizeArg2;
-        int reallocArg;
-        bool initData;
+        int groupId{};
+        int arg{};
+        enum class BufferSize : std::uint8_t {none,malloc,calloc,strdup};
+        BufferSize bufferSize{BufferSize::none};
+        int bufferSizeArg1{};
+        int bufferSizeArg2{};
+        int reallocArg{};
+        bool initData{};
+        bool noFail{};
     };
 
     /** get allocation info for function */
@@ -155,15 +162,17 @@ public:
         Standards standards;
         Severity severity;
     };
-    std::map<std::string, WarnInfo> functionwarn;
+    const std::map<std::string, WarnInfo>& functionwarn() const;
 
     const WarnInfo* getWarnInfo(const Token* ftok) const;
 
-    // returns true if ftok is not a library function
-    bool isNotLibraryFunction(const Token *ftok) const;
-    bool matchArguments(const Token *ftok, const std::string &functionName) const;
+    struct Function;
 
-    enum class UseRetValType { NONE, DEFAULT, ERROR_CODE };
+    // returns true if ftok is not a library function
+    bool isNotLibraryFunction(const Token *ftok, const Function **func = nullptr) const;
+    bool matchArguments(const Token *ftok, const std::string &functionName, const Function **func = nullptr) const;
+
+    enum class UseRetValType : std::uint8_t { NONE, DEFAULT, ERROR_CODE };
     UseRetValType getUseRetValType(const Token* ftok) const;
 
     const std::string& returnValue(const Token *ftok) const;
@@ -180,7 +189,7 @@ public:
     public:
         Container() = default;
 
-        enum class Action {
+        enum class Action : std::uint8_t {
             RESIZE,
             CLEAR,
             PUSH,
@@ -189,12 +198,13 @@ public:
             FIND_CONST,
             INSERT,
             ERASE,
+            APPEND,
             CHANGE_CONTENT,
             CHANGE,
             CHANGE_INTERNAL,
             NO_ACTION
         };
-        enum class Yield {
+        enum class Yield : std::uint8_t {
             AT_INDEX,
             ITEM,
             BUFFER,
@@ -228,28 +238,31 @@ public:
         bool unstableErase{};
         bool unstableInsert{};
         bool view{};
+        bool startPatternHasStd{};
 
         Action getAction(const std::string& function) const {
-            const std::map<std::string, Function>::const_iterator i = functions.find(function);
+            const auto i = functions.find(function);
             if (i != functions.end())
                 return i->second.action;
             return Action::NO_ACTION;
         }
 
         Yield getYield(const std::string& function) const {
-            const std::map<std::string, Function>::const_iterator i = functions.find(function);
+            const auto i = functions.find(function);
             if (i != functions.end())
                 return i->second.yield;
             return Yield::NO_YIELD;
         }
 
         const std::string& getReturnType(const std::string& function) const {
-            auto i = functions.find(function);
-            return (i != functions.end()) ? i->second.returnType : emptyString;
+            const auto i = functions.find(function);
+            return (i != functions.end()) ? i->second.returnType : mEmptyString;
         }
 
-        static Yield yieldFrom(const std::string& yieldName);
-        static Action actionFrom(const std::string& actionName);
+        CPPCHECKLIB static Yield yieldFrom(const std::string& yieldName);
+        CPPCHECKLIB static Action actionFrom(const std::string& actionName);
+        CPPCHECKLIB static std::string toString(Yield yield);
+        CPPCHECKLIB static std::string toString(Action action);
     };
     const std::unordered_map<std::string, Container>& containers() const;
     const Container* detectContainer(const Token* typeStart) const;
@@ -275,7 +288,7 @@ public:
         IteratorInfo iteratorInfo;
 
         struct MinSize {
-            enum class Type { NONE, STRLEN, ARGVALUE, SIZEOF, MUL, VALUE };
+            enum class Type : std::uint8_t { NONE, STRLEN, ARGVALUE, SIZEOF, MUL, VALUE };
             MinSize(Type t, int a) : type(t), arg(a) {}
             Type type;
             int arg;
@@ -285,13 +298,14 @@ public:
         };
         std::vector<MinSize> minsizes;
 
-        enum class Direction {
+        enum class Direction : std::uint8_t {
             DIR_IN,     ///< Input to called function. Data is treated as read-only.
             DIR_OUT,    ///< Output to caller. Data is passed by reference or address and is potentially written.
             DIR_INOUT,  ///< Input to called function, and output to caller. Data is passed by reference or address and is potentially modified.
             DIR_UNKNOWN ///< direction not known / specified
         };
-        Direction direction = Direction::DIR_UNKNOWN;
+        // argument directions up to ** indirect level (only one can be configured explicitly at the moment)
+        std::array<Direction, 3> direction = { { Direction::DIR_UNKNOWN, Direction::DIR_UNKNOWN, Direction::DIR_UNKNOWN } };
     };
 
     struct Function {
@@ -335,12 +349,12 @@ public:
         return arg && arg->strz;
     }
 
-    bool isIntArgValid(const Token *ftok, int argnr, const MathLib::bigint argvalue) const;
-    bool isFloatArgValid(const Token *ftok, int argnr, double argvalue) const;
+    bool isIntArgValid(const Token *ftok, int argnr, MathLib::bigint argvalue, const Settings& settings) const;
+    bool isFloatArgValid(const Token *ftok, int argnr, double argvalue, const Settings& settings) const;
 
     const std::string& validarg(const Token *ftok, int argnr) const {
         const ArgumentChecks *arg = getarg(ftok, argnr);
-        return arg ? arg->valid : emptyString;
+        return arg ? arg->valid : mEmptyString;
     }
 
     const ArgumentChecks::IteratorInfo *getArgIteratorInfo(const Token *ftok, int argnr) const {
@@ -355,7 +369,7 @@ public:
         return arg ? &arg->minsizes : nullptr;
     }
 
-    ArgumentChecks::Direction getArgDirection(const Token* ftok, int argnr) const;
+    ArgumentChecks::Direction getArgDirection(const Token* ftok, int argnr, int indirect = 0) const;
 
     bool markupFile(const std::string &path) const;
 
@@ -387,8 +401,8 @@ public:
     const Token* getContainerFromYield(const Token* tok, Container::Yield yield) const;
     const Token* getContainerFromAction(const Token* tok, Container::Action action) const;
 
-    static bool isContainerYield(const Token* const cond, Library::Container::Yield y, const std::string& fallback = emptyString);
-    static Library::Container::Yield getContainerYield(const Token* const cond);
+    static bool isContainerYield(const Token* cond, Library::Container::Yield y, const std::string& fallback = "");
+    static Library::Container::Yield getContainerYield(const Token* cond);
 
     bool isreflection(const std::string &token) const;
 
@@ -396,7 +410,7 @@ public:
 
     bool isentrypoint(const std::string &func) const;
 
-    std::set<std::string> defines; // to provide some library defines
+    const std::set<std::string>& defines() const; // to provide some library defines
 
     struct SmartPointer {
         std::string name;
@@ -408,9 +422,9 @@ public:
     const SmartPointer* detectSmartPointer(const Token* tok, bool withoutStd = false) const;
 
     struct PodType {
-        unsigned int size;
-        char sign;
-        enum class Type { NO, BOOL, CHAR, SHORT, INT, LONG, LONGLONG } stdtype;
+        unsigned int size{};
+        char sign{};
+        enum class Type : std::uint8_t { NO, BOOL, CHAR, SHORT, INT, LONG, LONGLONG } stdtype = Type::NO;
     };
     const PodType *podtype(const std::string &name) const;
 
@@ -436,14 +450,6 @@ public:
         bool mConstPtr{};
     };
 
-    struct Platform {
-        const PlatformType *platform_type(const std::string &name) const {
-            const std::map<std::string, PlatformType>::const_iterator it = mPlatformTypes.find(name);
-            return (it != mPlatformTypes.end()) ? &(it->second) : nullptr;
-        }
-        std::map<std::string, PlatformType> mPlatformTypes;
-    };
-
     const PlatformType *platform_type(const std::string &name, const std::string & platform) const;
 
     /**
@@ -452,10 +458,11 @@ public:
     std::string getFunctionName(const Token *ftok) const;
 
     /** Suppress/check a type */
-    enum class TypeCheck { def,
-                           check,
-                           suppress,
-                           checkFiniteLifetime, // (unusedvar) object has side effects, but immediate destruction is wrong
+    enum class TypeCheck : std::uint8_t {
+        def,
+        check,
+        suppress,
+        checkFiniteLifetime, // (unusedvar) object has side effects, but immediate destruction is wrong
     };
     TypeCheck getTypeCheck(std::string check, std::string typeName) const;
     bool hasAnyTypeCheck(const std::string& typeName) const;
@@ -464,110 +471,25 @@ private:
     Error load(const tinyxml2::XMLDocument &doc);
 
     // load a <function> xml node
-    Error loadFunction(const tinyxml2::XMLElement * const node, const std::string &name, std::set<std::string> &unknown_elements);
+    Error loadFunction(const tinyxml2::XMLElement * node, const std::string &name, std::set<std::string> &unknown_elements);
 
-    class ExportedFunctions {
-    public:
-        void addPrefix(std::string prefix) {
-            mPrefixes.insert(std::move(prefix));
-        }
-        void addSuffix(std::string suffix) {
-            mSuffixes.insert(std::move(suffix));
-        }
-        bool isPrefix(const std::string& prefix) const {
-            return (mPrefixes.find(prefix) != mPrefixes.end());
-        }
-        bool isSuffix(const std::string& suffix) const {
-            return (mSuffixes.find(suffix) != mSuffixes.end());
-        }
-
-    private:
-        std::set<std::string> mPrefixes;
-        std::set<std::string> mSuffixes;
-    };
-    class CodeBlock {
-    public:
-        CodeBlock() = default;
-
-        void setStart(const char* s) {
-            mStart = s;
-        }
-        void setEnd(const char* e) {
-            mEnd = e;
-        }
-        void setOffset(const int o) {
-            mOffset = o;
-        }
-        void addBlock(const char* blockName) {
-            mBlocks.insert(blockName);
-        }
-        const std::string& start() const {
-            return mStart;
-        }
-        const std::string& end() const {
-            return mEnd;
-        }
-        int offset() const {
-            return mOffset;
-        }
-        bool isBlock(const std::string& blockName) const {
-            return mBlocks.find(blockName) != mBlocks.end();
-        }
-
-    private:
-        std::string mStart;
-        std::string mEnd;
-        int mOffset{};
-        std::set<std::string> mBlocks;
-    };
-    std::unordered_map<std::string, Container> mContainers;
-    std::unordered_map<std::string, Function> mFunctions;
-    std::unordered_map<std::string, SmartPointer> mSmartPointers;
-    enum class FalseTrueMaybe { False, True, Maybe };
-    int mAllocId{};
-    std::set<std::string> mFiles;
-    std::map<std::string, AllocFunc> mAlloc; // allocation functions
-    std::map<std::string, AllocFunc> mDealloc; // deallocation functions
-    std::map<std::string, AllocFunc> mRealloc; // reallocation functions
-    std::unordered_map<std::string, FalseTrueMaybe> mNoReturn; // is function noreturn?
-    std::map<std::string, std::string> mReturnValue;
-    std::map<std::string, std::string> mReturnValueType;
-    std::map<std::string, int> mReturnValueContainer;
-    std::map<std::string, std::vector<MathLib::bigint>> mUnknownReturnValues;
-    std::map<std::string, bool> mReportErrors;
-    std::map<std::string, bool> mProcessAfterCode;
-    std::set<std::string> mMarkupExtensions; // file extensions of markup files
-    std::map<std::string, std::set<std::string>> mKeywords;  // keywords for code in the library
-    std::unordered_map<std::string, CodeBlock> mExecutableBlocks; // keywords for blocks of executable code
-    std::map<std::string, ExportedFunctions> mExporters; // keywords that export variables/functions to libraries (meta-code/macros)
-    std::map<std::string, std::set<std::string>> mImporters;  // keywords that import variables/functions
-    std::map<std::string, int> mReflection; // invocation of reflection
-    std::unordered_map<std::string, PodType> mPodTypes; // pod types
-    std::map<std::string, PlatformType> mPlatformTypes; // platform independent typedefs
-    std::map<std::string, Platform> mPlatforms; // platform dependent typedefs
-    std::map<std::pair<std::string,std::string>, TypeCheck> mTypeChecks;
-    std::unordered_map<std::string, NonOverlappingData> mNonOverlappingData;
-    std::unordered_set<std::string> mEntrypoints;
+    struct LibraryData;
+    std::unique_ptr<LibraryData> mData;
 
     const ArgumentChecks * getarg(const Token *ftok, int argnr) const;
 
     std::string getFunctionName(const Token *ftok, bool &error) const;
 
     static const AllocFunc* getAllocDealloc(const std::map<std::string, AllocFunc> &data, const std::string &name) {
-        const std::map<std::string, AllocFunc>::const_iterator it = data.find(name);
+        const auto it = data.find(name);
         return (it == data.end()) ? nullptr : &it->second;
     }
 
-    enum DetectContainer { ContainerOnly, IteratorOnly, Both };
+    enum DetectContainer : std::uint8_t { ContainerOnly, IteratorOnly, Both };
     const Library::Container* detectContainerInternal(const Token* typeStart, DetectContainer detect, bool* isIterator = nullptr, bool withoutStd = false) const;
 };
 
 CPPCHECKLIB const Library::Container * getLibraryContainer(const Token * tok);
-
-std::shared_ptr<Token> createTokenFromExpression(const std::string& returnValue,
-                                                 const Settings& settings,
-                                                 bool cpp,
-                                                 std::unordered_map<nonneg int, const Token*>* lookupVarId = nullptr);
 
 /// @}
 //---------------------------------------------------------------------------

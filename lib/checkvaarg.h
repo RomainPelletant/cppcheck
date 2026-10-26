@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,14 +23,15 @@
 //---------------------------------------------------------------------------
 
 #include "check.h"
+#include "checkimpl.h"
 #include "config.h"
-#include "tokenize.h"
 
 #include <string>
 
 class ErrorLogger;
 class Settings;
 class Token;
+class Tokenizer;
 
 /// @addtogroup Checks
 /// @{
@@ -41,39 +42,12 @@ class Token;
 
 class CPPCHECKLIB CheckVaarg : public Check {
 public:
-    CheckVaarg() : Check(myName()) {}
+    CheckVaarg() : Check("Vaarg") {}
+
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger& errorLogger) override;
 
 private:
-    CheckVaarg(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
-        : Check(myName(), tokenizer, settings, errorLogger) {}
-
-    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override {
-        CheckVaarg check(&tokenizer, &tokenizer.getSettings(), errorLogger);
-        check.va_start_argument();
-        check.va_list_usage();
-    }
-
-    void va_start_argument();
-    void va_list_usage();
-
-    void wrongParameterTo_va_start_error(const Token *tok, const std::string& paramIsName, const std::string& paramShouldName);
-    void referenceAs_va_start_error(const Token *tok, const std::string& paramName);
-    void va_end_missingError(const Token *tok, const std::string& varname);
-    void va_list_usedBeforeStartedError(const Token *tok, const std::string& varname);
-    void va_start_subsequentCallsError(const Token *tok, const std::string& varname);
-
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        CheckVaarg c(nullptr, settings, errorLogger);
-        c.wrongParameterTo_va_start_error(nullptr, "arg1", "arg2");
-        c.referenceAs_va_start_error(nullptr, "arg1");
-        c.va_end_missingError(nullptr, "vl");
-        c.va_list_usedBeforeStartedError(nullptr, "vl");
-        c.va_start_subsequentCallsError(nullptr, "vl");
-    }
-
-    static std::string myName() {
-        return "Vaarg";
-    }
+    void getErrorMessages(ErrorLogger& errorLogger, const Settings &settings) const override;
 
     std::string classInfo() const override {
         return "Check for misusage of variable argument lists:\n"
@@ -83,6 +57,22 @@ private:
                "- Using va_list before it is opened\n"
                "- Subsequent calls to va_start/va_copy()\n";
     }
+};
+
+class CPPCHECKLIB CheckVaargImpl : public CheckImpl
+{
+public:
+    CheckVaargImpl(const Tokenizer *tokenizer, const Settings &settings, ErrorLogger &errorLogger)
+        : CheckImpl(tokenizer, settings, errorLogger) {}
+
+    void va_start_argument();
+    void va_list_usage();
+
+    void wrongParameterTo_va_start_error(const Token *tok, const std::string& paramIsName, const std::string& paramShouldName);
+    void referenceAs_va_start_error(const Token *tok, const std::string& paramName);
+    void va_end_missingError(const Token *tok, const std::string& varname);
+    void va_list_usedBeforeStartedError(const Token *tok, const std::string& varname);
+    void va_start_subsequentCallsError(const Token *tok, const std::string& varname);
 };
 
 /// @}

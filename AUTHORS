@@ -1,6 +1,7 @@
 The cppcheck team, in alphabetical order:
 
 0x41head
+Aaron Danen
 Abhijit Sawant
 Abhishek Bharadwaj
 Abigail Buccaneer
@@ -10,6 +11,7 @@ Ahti Legonkov
 Akhilesh Nema
 Akio Idehara
 Albert Aribaud
+Alvin Che-Chia Chang
 Aleksandr Pikalev
 Aleksey Palazhchenko
 Alexander Alekseev
@@ -22,15 +24,19 @@ Alexey Eryomenko
 Alexey Zhikhartsev
 Alfi Maulana
 Ali Can Demiralp
+Alvin Che-Chia Chang
+Allen Winter
 Alon Alexander
 Alon Liberman
 Ameen Ali
 Andreas Bacher
 Andreas Bießmann
 Andreas Grob
+Andreas Lutsch
 Andreas Pokorny
 Andreas Rönnquist
 Andreas Vollenweider
+Andreas Wilhelm
 Andrei Karas
 Andrew C Aitchison
 Andrew C. Martin
@@ -46,6 +52,7 @@ Antti Tuppurainen
 Anurag Garg
 Armin Müller
 Arpit Chaudhary
+Artemis Meursault Gerrard
 August Sodora
 Ayaz Salikhov
 Balázs Tóth
@@ -63,6 +70,7 @@ Ben T
 Bernd Buschinski
 Bill Egert
 Björge Dijkstra
+Björn Blissing
 booga
 Boris Barbulovski
 Boris Egorov
@@ -74,11 +82,15 @@ Carl Morgan
 Carlo Marcelo Arenas Belón
 Carlos Gomes Martinho
 Carl-Oskar Larsson
+Cary Converse
 Cary R
+Caspar Kielwein
 Changkyoon Kim
+Chencheng Mao
 Chris Lalancette
 Christian Ehrlicher
 Christian Franke
+Christian Göttsche
 Christoph Grüninger
 Christoph Schmidt
 Christoph Strehle
@@ -87,17 +99,21 @@ Cilyan Olowen
 Claus Jensby Madsen
 Colomban Wendling
 Conrado Gouvea
+correctmost
 daisuke-chiba
 Daniel Friedrich
 David Korczynski
 Daniel Marjamäki
+Daschle Newberry
 David Hallas
 David Korth
+David Ramnerö
 Dávid Slivka
 Debrard Sebastien
 Deepak Gupta
 Degen's Regens
 dencat
+Devansh Varshney
 Diego de las Heras
 Dirk Jagdmann
 Dirk Mueller
@@ -118,15 +134,23 @@ Erik Lax
 Ettl Martin
 Even Rouault
 Evgeny Mandrikov
+feelamee
 Felipe Pena
+Felix Faber
 Felix Geyer
 Felix Passenberg
+Felix Patschkowski
 Felix Wolff
+Florian Mueller
 Florin Iucha
+flovent
 Francesc Elies
+François Berder
+Frank Winklmeier
 Frank Zingsheim
 Frederik Schwarzer
 fu7mu4
+Gaël Bonithon
 Galimov Albert
 Garrett Bodily
 Gary Leutheuser
@@ -139,7 +163,9 @@ Gerhard Zlabinger
 Gerik Rhoden
 Gianfranco Costamagna
 Gianluca Scacco
+Gilmar Santos Jr
 Gleydson Soares
+Goncalo Mao-Cheia
 Goran Džaferi
 Graham Whitted
 Greg Hewgill
@@ -168,16 +194,21 @@ Jan Egil Ruud
 Jan Hellwig
 János Maros
 Jay Sigbrandt
+Jean-François Deverge
 Jedrzej Klocek
+Jeewoong Kim
 Jens Bäckman
 Jens Yllman
 Jérémy Lefaure
+Jérôme Duval
 Jes Ramsing
 Jesse Boswell
 Jim Kuhn
 Jim Zhou
 jlguardi
+Joel Johnson
 Johan Bertrand
+Johan Crone
 Johan Samuelson
 John Marshall
 John-Paul Ore
@@ -186,6 +217,7 @@ Jonathan Clohessy
 Jonathan Haehne
 Jonathan Neuschäfer
 Jonathan Thackray
+Jonny Paton
 José Martins
 Jose Roquette
 Joshua Beck
@@ -205,6 +237,7 @@ Ketil Skjerve
 Kevin Christian
 Kevin Kendzia
 Kimmo Varis
+Kitsios Konstantinos
 Kleber Tarcísio
 Konrad Grochowski
 Konrad Windszus
@@ -215,6 +248,7 @@ Lars Even Almaas
 larudwer
 Lau bakman
 Lauri Nurmi
+Leander Schulten
 Leandro Lisboa Penz
 Leila F. Rahman
 Lena Herscheid
@@ -223,8 +257,11 @@ Lieven de Cock
 lioncash
 Lionel Gimbert
 Lucas Manuel Rodriguez
+Ludvig Gunne Lindström
 Luis Díaz Más
+Luís Pereira
 Lukas Grützmacher
+Lukas Hiesmayr
 Lukasz Czajczyk
 Łukasz Jankowski
 Luxon Jean-Pierre
@@ -232,6 +269,7 @@ Maarten van der Schrieck
 Maksim Derbasov
 Malcolm Parsons
 Marc-Antoine Perennou
+Marcel Petrick
 Marcel Raad
 Marco Trevisan
 Marek Zmysłowski
@@ -239,6 +277,7 @@ Marian Klymov
 Mark de Wever
 Mark Hermeling
 Markus Elfring
+Martin Boye Petersen
 Martin Delille
 Martin Ettl
 Martin Exner
@@ -248,6 +287,7 @@ Márton Csordás
 Masafumi Koba
 Massimo Paladin
 Mateusz Michalak
+Mateusz Patyk
 Mateusz Pusz
 Mathias De Maré
 Mathias Schmid
@@ -257,6 +297,7 @@ Matthias Schmieder
 Matt Johnson
 Maurice Gilden
 Mavik
+Melroy van den Berg
 Michael Drake
 Michael Løiten
 Miika-Petteri Matikainen
@@ -279,6 +320,8 @@ Nicolás Alvarez
 Nicolas Le Cam
 Nilesh Kumar
 Ogawa KenIchi
+Ola Söder
+Oleksandr Labetskyi
 Oleksandr Redko
 Oliver Schode
 Oliver Stöneberg
@@ -299,6 +342,8 @@ Peter Schops
 Philip Chimento
 Philipp Kloke
 Pierre Schweitzer
+Pieter Duchi
+Piotr Idzik
 Pino Toscano
 Pranav Khanna
 Radek Jarecki
@@ -307,6 +352,7 @@ Ramzan Bekbulatov
 Raphael Geissert
 Razvan Ioan Alexe
 Reijo Tomperi
+Reshma V Kumar
 Rainer Wiesenfarth
 Riccardo Ghetta
 Richard A. Smith
@@ -318,6 +364,7 @@ Robert Habrich
 Robert Morin
 Roberto Martelloni
 Robert Reif
+Robin Getz
 rofl0r
 Roman Zaytsev Borisovich
 Ronald Hiemstra
@@ -333,7 +380,10 @@ Samuel Degrande
 Samuel Poláček
 Sandeep Dutta
 Savvas Etairidis
+Sayed Kaif
+Scott Ehlert
 Scott Furry
+Seafarix Ltd.
 Sebastian Held
 Sebastian Matuschka
 Sébastien Debrard
@@ -360,11 +410,14 @@ Steve Duan
 Steve Mokris
 Steven Cook
 Steven Myint
+Sune Stolborg Vuorela
 Susi Lehtola
+Sven Wienand
 Swasti Shrivastava
 Sylvain Joubert
 Tam Do Thanh
 Teddy Didé
+Temuri Doghonadze
 Thomas Arnhold
 Tomasz Edward Posluszny
 Thomas Jarosch
@@ -376,13 +429,16 @@ Thorsten Sick
 Tim Blume
 Tim Gerundt
 tititiou36
+Tobias Weber
 Tobias Weibel
 Tomasz Kłoczko
 Tom Pollok
 Tomo Dote
+Tommy Bergman
 Toralf Förster
 Troshin V.S.
 Tyson Nottingham
+Usman Majid
 Valentin Batz
 Valerii Lashmanov
 Vasily Maslyukov
@@ -391,8 +447,12 @@ Vesa Pikki
 Ville-Pekka Vahteala
 Ville Skyttä
 Vincent Le Garrec
+Vít Kučera
+Vladimir Petrigo
 Wang Haoyu
+Wang Yang
 WenChung Chiu
+William Jakobsson
 Wolfgang Stöggl
 x29a
 XhmikosR

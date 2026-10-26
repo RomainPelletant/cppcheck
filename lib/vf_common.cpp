@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,8 @@
 
 #include "vf_common.h"
 
+#include "astutils.h"
+#include "library.h"
 #include "mathlib.h"
 #include "path.h"
 #include "platform.h"
@@ -25,12 +27,13 @@
 #include "standards.h"
 #include "symboldatabase.h"
 #include "token.h"
-#include "valueflow.h"
+#include "vfvalue.h"
 
 #include "vf_settokenvalue.h"
 
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <limits>
 #include <utility>
@@ -43,7 +46,7 @@ namespace ValueFlow
         if (!vt || !vt->isIntegral() || vt->pointer)
             return false;
 
-        int bits;
+        std::uint8_t bits;
         switch (vt->type) {
         case ValueType::Type::BOOL:
             bits = 1;
@@ -93,11 +96,25 @@ namespace ValueFlow
         return true;
     }
 
+    MathLib::bigint truncateIntValue(MathLib::bigint value, size_t value_size, const ValueType* dst, const Platform& platform)
+    {
+        if (value_size == 0)
+            return value;
+
+        const MathLib::biguint unsignedMaxValue = std::numeric_limits<MathLib::biguint>::max() >> ((sizeof(unsignedMaxValue) - value_size) * 8);
+        const MathLib::biguint signBit = 1ULL << ((value_size * 8) - 1);
+        value &= unsignedMaxValue;
+        if ((dst->sign == ValueType::Sign::SIGNED || (dst->sign == ValueType::Sign::UNKNOWN_SIGN && dst->type == ValueType::Type::CHAR && platform.defaultSign == 's')) && (value & signBit))
+            value |= ~unsignedMaxValue;
+
+        return value;
+    }
+
     static nonneg int getSizeOfType(const Token *typeTok, const Settings &settings)
     {
         const ValueType &valueType = ValueType::parseDecl(typeTok, settings);
 
-        return getSizeOf(valueType, settings);
+        return valueType.getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
     }
 
     // Handle various constants..
@@ -105,9 +122,11 @@ namespace ValueFlow
     {
         if ((tok->isNumber() && MathLib::isInt(tok->str())) || (tok->tokType() == Token::eChar)) {
             try {
-                MathLib::bigint signedValue = MathLib::toBigNumber(tok->str());
+                MathLib::bigint signedValue = MathLib::toBigNumber(tok);
                 const ValueType* vt = tok->valueType();
-                if (vt && vt->sign == ValueType::UNSIGNED && signedValue < 0 && getSizeOf(*vt, settings) < sizeof(MathLib::bigint)) {
+                if (vt && vt->sign == ValueType::UNSIGNED && signedValue < 0
+                    && vt->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer)
+                    < sizeof(MathLib::bigint)) {
                     MathLib::bigint minValue{}, maxValue{};
                     if (getMinMaxValues(tok->valueType(), settings.platform, minValue, maxValue))
                         signedValue += maxValue + 1;
@@ -120,28 +139,40 @@ namespace ValueFlow
                 // Bad character literal
             }
         } else if (tok->isNumber() && MathLib::isFloat(tok->str())) {
-            Value value;
-            value.valueType = Value::ValueType::FLOAT;
-            value.floatValue = MathLib::toDoubleNumber(tok->str());
-            if (!tok->isTemplateArg())
-                value.setKnown();
-            setTokenValue(tok, std::move(value), settings);
+            // A long double literal out of the range of double (1e400L) has no
+            // double value: infinity would make different literals compare equal.
+            if (!MathLib::isLongDoubleOutOfDoubleRange(tok->str())) {
+                Value value;
+                value.valueType = Value::ValueType::FLOAT;
+                value.floatValue = MathLib::toDoubleNumber(tok);
+                if (!tok->isTemplateArg())
+                    value.setKnown();
+                setTokenValue(tok, std::move(value), settings);
+            }
         } else if (tok->enumerator() && tok->enumerator()->value_known) {
             Value value(tok->enumerator()->value);
             if (!tok->isTemplateArg())
                 value.setKnown();
             setTokenValue(tok, std::move(value), settings);
-        } else if (tok->str() == "NULL" || (tok->isCpp() && tok->str() == "nullptr")) {
+        } else if (tok->str() == "NULL" || ((tok->isCpp() || settings.standards.c >= Standards::C23) && tok->str() == "nullptr")) {
             Value value(0);
             if (!tok->isTemplateArg())
                 value.setKnown();
             setTokenValue(tok, std::move(value), settings);
+        } else if ((tok->isCpp() || settings.standards.c >= Standards::C23) && (tok->isName() && tok->varId() == 0 && Token::Match(tok, "%bool%"))) {
+            Value value(tok->str() == "true");
+            if (!tok->isTemplateArg())
+                value.setKnown();
+            setTokenValue(tok, std::move(value), settings);
         } else if (Token::simpleMatch(tok, "sizeof (")) {
-            if (tok->next()->astOperand2() && !tok->next()->astOperand2()->isLiteral() && tok->next()->astOperand2()->valueType() &&
-                (tok->next()->astOperand2()->valueType()->pointer == 0 || // <- TODO this is a bailout, abort when there are array->pointer conversions
-                 (tok->next()->astOperand2()->variable() && !tok->next()->astOperand2()->variable()->isArray())) &&
-                !tok->next()->astOperand2()->valueType()->isEnum()) { // <- TODO this is a bailout, handle enum with non-int types
-                const size_t sz = getSizeOf(*tok->next()->astOperand2()->valueType(), settings);
+            const Token* const obj = tok->next()->astOperand2();
+            if (obj && !obj->isLiteral() && obj->valueType() &&
+                (obj->valueType()->pointer == 0 || // <- TODO this is a bailout, abort when there are array->pointer conversions
+                 (obj->variable() && !obj->variable()->isArray())) &&
+                !obj->valueType()->isEnum() && // <- TODO this is a bailout, handle enum with non-int types
+                !(obj->valueType()->container && obj->valueType()->container->startPattern == "std :: array <")) {
+                const auto ptrPointee = obj->valueType()->pointer > 0 ? ValueType::SizeOf::Pointer : ValueType::SizeOf::Pointee;
+                const size_t sz = obj->valueType()->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ptrPointee);
                 if (sz) {
                     Value value(sz);
                     value.setKnown();
@@ -153,14 +184,15 @@ namespace ValueFlow
             const Token *tok2 = tok->tokAt(2);
             // skip over tokens to find variable or type
             while (tok2 && !tok2->isStandardType() && Token::Match(tok2, "%name% ::|.|[")) {
-                if (tok2->next()->str() == "[")
+                if (tok2->strAt(1) == "[")
                     tok2 = tok2->linkAt(1)->next();
                 else
                     tok2 = tok2->tokAt(2);
             }
             if (Token::simpleMatch(tok, "sizeof ( *")) {
                 const ValueType *vt = tok->tokAt(2)->valueType();
-                const size_t sz = vt ? getSizeOf(*vt, settings) : 0;
+                const size_t sz = vt ? vt->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer)
+                                     : 0;
                 if (sz > 0) {
                     Value value(sz);
                     if (!tok2->isTemplateArg() && settings.platform.type != Platform::Type::Unspecified)
@@ -211,9 +243,7 @@ namespace ValueFlow
                     setTokenValue(tok->tokAt(4), std::move(value), settings);
                 }
             } else if (Token::Match(tok2, "%var% )")) {
-                const Variable *var = tok2->variable();
-                // only look for single token types (no pointers or references yet)
-                if (var && var->typeStartToken() == var->typeEndToken()) {
+                if (const Variable *var = tok2->variable()) {
                     // find the size of the type
                     size_t size = 0;
                     if (var->isEnumType()) {
@@ -221,7 +251,12 @@ namespace ValueFlow
                         if (var->type()->classScope && var->type()->classScope->enumType)
                             size = getSizeOfType(var->type()->classScope->enumType, settings);
                     } else if (var->valueType()) {
-                        size = getSizeOf(*var->valueType(), settings);
+                        if (var->valueType()->container && var->valueType()->container->startPattern == "std :: array <") {
+                            const ValueType vtElement = ValueType::parseDecl(var->valueType()->containerTypeToken, settings);
+                            size = vtElement.getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
+                        }
+                        else
+                            size = var->valueType()->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
                     } else if (!var->type()) {
                         size = getSizeOfType(var->typeStartToken(), settings);
                     }
@@ -270,13 +305,13 @@ namespace ValueFlow
                 }
             } else if (!tok2->type()) {
                 const ValueType& vt = ValueType::parseDecl(tok2, settings);
-                size_t sz = getSizeOf(vt, settings);
+                size_t sz = vt.getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
                 const Token* brac = tok2->astParent();
                 while (Token::simpleMatch(brac, "[")) {
                     const Token* num = brac->astOperand2();
                     if (num && ((num->isNumber() && MathLib::isInt(num->str())) || num->tokType() == Token::eChar)) {
                         try {
-                            const MathLib::biguint dim = MathLib::toBigUNumber(num->str());
+                            const MathLib::biguint dim = MathLib::toBigUNumber(num);
                             sz *= dim;
                             brac = brac->astParent();
                             continue;
@@ -304,7 +339,7 @@ namespace ValueFlow
             if (!tok->isTemplateArg())
                 value.setKnown();
             setTokenValue(tok->next(), std::move(value), settings);
-        } else if (Token::simpleMatch(tok, "= { } ;")) {
+        } else if (Token::simpleMatch(tok, "= { }")) {
             const Token* lhs = tok->astOperand1();
             if (lhs && lhs->valueType() && (lhs->valueType()->isIntegral() || lhs->valueType()->pointer > 0)) {
                 Value value(0);
@@ -320,7 +355,7 @@ namespace ValueFlow
         if (value.isFloatValue()) {
             value.valueType = Value::ValueType::INT;
             if (value.floatValue >= std::numeric_limits<int>::min() && value.floatValue <= std::numeric_limits<int>::max()) {
-                value.intvalue = value.floatValue;
+                value.intvalue = static_cast<MathLib::bigint>(value.floatValue);
             } else { // don't perform UB
                 value.intvalue = 0;
             }
@@ -365,5 +400,26 @@ namespace ValueFlow
         std::string s = Path::stripDirectoryPart(file) + ":" + std::to_string(ctx.line()) + ": " + ctx.function_name() +
                         " => " + local.function_name() + ": " + debugString(v);
         v.debugPath.emplace_back(tok, std::move(s));
+    }
+
+    MathLib::bigint valueFlowGetStrLength(const Token* tok, const Library& library)
+    {
+        if (tok->tokType() == Token::eString)
+            return Token::getStrLength(tok);
+        if (astIsGenericChar(tok) || tok->tokType() == Token::eChar)
+            return 1;
+        if (const Value* v = tok->getKnownValue(Value::ValueType::CONTAINER_SIZE)) {
+            // on a pointer the size is the number of elements in the buffer (possibly including
+            // a null terminator), not the length of the string
+            if (!astIsPointer(tok))
+                return v->intvalue;
+        }
+        if (const Value* v = tok->getKnownValue(Value::ValueType::TOK)) {
+            if (v->tokvalue != tok)
+                return valueFlowGetStrLength(v->tokvalue, library);
+        }
+        if (const Token* cont = library.getContainerFromYield(tok, Library::Container::Yield::BUFFER_NT))
+            return valueFlowGetStrLength(cont, library);
+        return 0;
     }
 }

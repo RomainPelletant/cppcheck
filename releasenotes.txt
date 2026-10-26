@@ -1,22 +1,27 @@
-Release Notes for Cppcheck 2.15
+
+Release Notes for Cppcheck 2.23
+
+Major bug fixes & crashes:
+-
 
 New checks:
 -
 
-Improved checking:
+C/C++ support:
 -
 
 GUI:
 -
 
-Changed interface:
+Suppressions:
 -
 
-Deprecations:
-- Support for Python 2.7 has been deprecated (it went EOL in January 2020) and will be removed in Cppcheck 2.16 - please use Python 3.x instead.
+Import project:
 -
+
+Infrastructure & dependencies:
+- Added arm64 platform files arm64-windows.xml, arm64-linux.xml and arm64-macos.xml (Apple Silicon).
+  These describe the default setup for that OS. The arm64-wchar_t2.xml and arm64-wchar_t4.xml files are kept.
 
 Other:
-- Add support for 'CLICOLOR_FORCE'/'NO_COLOR' environment variables to force/disable ANSI color output for diagnostics.
-- added command-line option `--cpp-header-probe` (and `--no-cpp-header-probe`) to probe headers and extension-less files for Emacs marker (see https://trac.cppcheck.net/ticket/10692 for more details)
 -

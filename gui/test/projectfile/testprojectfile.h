@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2021 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,6 @@
  */
 
 #include <QObject>
-#include <QString>
 
 class TestProjectFile : public QObject {
     Q_OBJECT
@@ -29,8 +28,20 @@ private slots:
     void loadSimpleNoroot() const;
 
     void getAddonFilePath() const;
+    void getSearchPaths() const;
+
+    void getInlineSuppressionDefaultValue() const;
+    void getInlineSuppression() const;
 
     void getCheckingSuppressionsRelative() const;
     void getCheckingSuppressionsAbsolute() const;
     void getCheckingSuppressionsStar() const;
+
+    void emptyUserInclude() const;
+
+    void getRelativePathRelative() const;
+    void getRelativePathTwoUp() const;
+    void getRelativePathTooFarUp() const;
+    void getRelativePathSubfolder() const;
+    void getRelativePathAbsoluteShorter() const;
 };

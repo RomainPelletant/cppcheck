@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,21 +23,29 @@
 #include "mathlib.h"
 #include "sourcelocation.h"
 #include "symboldatabase.h"
-#include "vfvalue.h"
 
+#include <cstddef>
 #include <string>
 
 class Token;
 class Settings;
 class Platform;
+class Library;
+
+namespace ValueFlow
+{
+    class Value;
+}
 
 namespace ValueFlow
 {
     bool getMinMaxValues(const ValueType* vt, const Platform& platform, MathLib::bigint& minValue, MathLib::bigint& maxValue);
 
+    MathLib::bigint truncateIntValue(MathLib::bigint value, size_t value_size, const ValueType* dst, const Platform& platform);
+
     Token * valueFlowSetConstantValue(Token *tok, const Settings &settings);
 
-    Value castValue(Value value, const ValueType::Sign sign, nonneg int bit);
+    Value castValue(Value value, ValueType::Sign sign, nonneg int bit);
 
     std::string debugString(const Value& v);
 
@@ -45,6 +53,8 @@ namespace ValueFlow
                            SourceLocation ctx,
                            const Token* tok,
                            SourceLocation local = SourceLocation::current());
+
+    MathLib::bigint valueFlowGetStrLength(const Token* tok, const Library& library);
 }
 
 #endif // vfCommonH

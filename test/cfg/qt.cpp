@@ -2,7 +2,7 @@
 // Test library configuration for qt.cfg
 //
 // Usage:
-// $ cppcheck --check-library --library=qt --enable=style,information --inconclusive --error-exitcode=1 --disable=missingInclude --inline-suppr test/cfg/qt.cpp
+// $ cppcheck --check-library --library=qt --enable=style,information --inconclusive --error-exitcode=1 --inline-suppr test/cfg/qt.cpp
 // =>
 // No warnings about bad library configuration, unmatched suppressions, etc. exitcode=0
 //
@@ -15,7 +15,6 @@
 #include <QStack>
 #include <QByteArray>
 #include <QList>
-#include <QLinkedList>
 #include <QMap>
 #include <QMultiMap>
 #include <QQueue>
@@ -33,6 +32,13 @@
 #include <QPointF>
 #include <QRegion>
 #include <QTransform>
+#include <QDir>
+#include <QTimer>
+
+// TODO: this is actually available via Core5Compat but I could not get it to work with pkg-config
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
+#include <QLinkedList>
+#endif
 
 #include <cstdio>
 
@@ -48,6 +54,33 @@ int ignoredReturnValue_QSize_width(const QSize &s)
     // cppcheck-suppress ignoredReturnValue
     s.width();
     return s.width();
+}
+
+
+void ignoredReturnValue_QDir(const QString& dirname)
+{
+    QDir dir(dirname);
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.exists("abc");
+
+    // cppcheck-suppress ignoredReturnErrorCode
+    dir.mkdir("abc");
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.count();
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.filePath("abc");
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.entryList();
+}
+
+void assertWithSideEffect_QDir_exists(const char *path) { // #14720
+    QDir dir(path);
+    assert(dir.exists());
+    (void)dir;
 }
 
 void unusedVariable_QTransform()
@@ -173,7 +206,6 @@ void QString1(QString s)
 bool QString2()
 {
     QString s;
-    // cppcheck-suppress knownConditionTrueFalse
     return s.size();
 }
 
@@ -209,6 +241,12 @@ QStringList QString6(QString s) {
 // cppcheck-suppress passedByValue
 bool QString7(QString s, const QString& l) {
     return l.startsWith(s);
+}
+
+void QString_split(const char* name) { // #12998
+    // cppcheck-suppress valueFlowBailoutIncompleteVar // FIXME
+    QStringList qsl = QString(name).split(';', Qt::SkipEmptyParts);
+    if (qsl.isEmpty()) {}
 }
 
 namespace NTestStd // #12355
@@ -317,6 +355,7 @@ QList<int>::iterator QList3()
     return it;
 }
 
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 void QLinkedList1()
 {
     // cppcheck-suppress unreadVariable
@@ -353,6 +392,7 @@ QLinkedList<int>::iterator QLinkedList3()
     // cppcheck-suppress returnDanglingLifetime
     return it;
 }
+#endif
 
 void QStringList1(QStringList stringlistArg)
 {
@@ -563,10 +603,12 @@ void MacroTest2_test()
     QByteArray ba = str.toLatin1();
     printf(ba.data());
 
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 #ifndef QT_NO_DEPRECATED
     str = MacroTest2::trUtf8("test2");
     ba = str.toLatin1();
     printf(ba.data());
+#endif
 #endif
 }
 
@@ -611,7 +653,7 @@ void validCode(int * pIntPtr, QString & qstrArg, double d)
         if (qstr1.length() == 1) {}
     }
     if (qstr1.length() == 1) {} else {
-        qstr1.remove(1);
+        qstr1.remove(1, 0);
         if (qstr1.length() == 1) {}
     }
 }
@@ -661,6 +703,7 @@ namespace {
     private slots:
         void foo();
     };
+    // cppcheck-suppress functionStatic
     void Fred::foo() {}
 
     // bitfields14
@@ -685,6 +728,7 @@ namespace {
     private:
         int m_value;
     };
+    // cppcheck-suppress shadowFunction
     void Counter1::setValue(int value) {
         if (value != m_value) {
             m_value = value;
@@ -708,6 +752,7 @@ namespace {
     private:
         int m_value;
     };
+    // cppcheck-suppress shadowFunction
     void Counter2::setValue(int value) {
         if (value != m_value) {
             m_value = value;
@@ -720,6 +765,7 @@ namespace {
         ~MyObject1() {}
     public slots:
     signals:
+        // cppcheck-suppress functionStatic
         void test() {}
     };
 
@@ -785,3 +831,81 @@ void unreadVariable_QMapIterator(QMap<QString, QObject*>& m)
         it.value() = new QObject();
     }
 }
+
+void constVariablePointer_QVector(QVector<int*>& qv, int* p)
+{
+    qv.push_back(p); // #12661
+}
+
+void constParameterPointer_QHash_insert(QHash<int*, int*>& qh, int* k, int* v)
+{
+    qh.insert(k, v); // #13902
+}
+
+bool constParameterPointer_QHash_find(const QHash<int*, int*>& qh, int* k)
+{
+    auto it = qh.find(k);
+    return it != qh.end();
+}
+
+bool constParameterPointer_QHash_contains(const QHash<int*, int*>& qh, int* k)
+{
+    return qh.contains(k);
+}
+
+int constParameterPointer_QHash_count(const QHash<int*, int*>& qh, int* k)
+{
+    return qh.count(k);
+}
+
+const QString& unassignedVariable_static_QString() // #12935
+{
+    static QString qs;
+    return qs;
+}
+
+struct BQObject_missingOverride { // #13406
+    Q_OBJECT
+};
+
+struct DQObject_missingOverride : BQObject_missingOverride {
+    Q_OBJECT
+};
+
+namespace {
+    class TestUnusedFunction : public QObject { // #13236
+        TestUnusedFunction();
+        void doStuff();
+    };
+
+    TestUnusedFunction::TestUnusedFunction() {
+        QObject::connect(this, SIGNAL(doStuff()), SLOT(doStuff()));
+    }
+
+    // cppcheck-suppress functionStatic
+    void TestUnusedFunction::doStuff() {} // Should not warn here with unusedFunction
+}
+
+int qdateIsValid()
+{
+    QDate qd(1,1,2025);
+    Q_ASSERT(qd.isValid()); // Should not warn here with assertWithSideEffect
+    return qd.month(); 
+}
+
+void qAssertX()
+{
+    const char *where = "test";
+    const char *what = "assertion failed";
+    Q_ASSERT_X(false, where, what);
+}
+
+struct S_QTimer_connect : QObject { // #13846
+    S_QTimer_connect() {
+        // cppcheck-suppress checkLibraryFunction - timeout() is a signal from QTimer
+        QObject::connect(&timer, SIGNAL(timeout()), this, SLOT(update()));
+    }
+    QTimer timer;
+private slots:
+    bool update();
+};

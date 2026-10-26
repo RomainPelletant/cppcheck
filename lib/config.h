@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,12 +35,6 @@
 #  define CPPCHECKLIB
 #endif
 
-// MS Visual C++ memory leak debug tracing
-#if !defined(DISABLE_CRTDBG_MAP_ALLOC) && defined(_MSC_VER) && defined(_DEBUG)
-#  define _CRTDBG_MAP_ALLOC
-#  include <crtdbg.h>
-#endif
-
 // compatibility macros
 #ifndef __has_builtin
 #define __has_builtin(x) 0
@@ -56,16 +50,6 @@
 
 #ifndef __has_feature
 #define __has_feature(x) 0
-#endif
-
-// C++11 noexcept
-#if defined(__cpp_noexcept_function_type) || \
-    (defined(__GNUC__) && (__GNUC__ >= 5)) \
-    || defined(__clang__) \
-    || defined(__CPPCHECK__)
-#  define NOEXCEPT noexcept
-#else
-#  define NOEXCEPT
 #endif
 
 // C++11 noreturn
@@ -102,6 +86,7 @@
 #  define UNUSED
 #endif
 
+// TODO: AppleClang versions do not align with Clang versions - add check for proper version
 // warn_unused
 #if __has_cpp_attribute (gnu::warn_unused) || \
     (defined(__clang__) && (__clang_major__ >= 15))
@@ -121,10 +106,18 @@
 #  define DEPRECATED
 #endif
 
-#define REQUIRES(msg, ...) class=typename std::enable_if<__VA_ARGS__::value>::type
+// TODO: AppleClang versions do not align with Clang versions - add check for proper version
+// returns_nonnull
+#if __has_cpp_attribute (gnu::returns_nonnull)
+#  define RET_NONNULL [[gnu::returns_nonnull]]
+#elif (defined(__clang__) && ((__clang_major__ > 3) || ((__clang_major__ == 3) && (__clang_minor__ >= 7)))) \
+    || (defined(__GNUC__) && (__GNUC__ >= 9))
+#  define RET_NONNULL __attribute__((returns_nonnull))
+#else
+#  define RET_NONNULL
+#endif
 
-#include <string>
-static const std::string emptyString;
+#define REQUIRES(msg, ...) class=typename std::enable_if<__VA_ARGS__::value>::type
 
 // Use the nonneg macro when you want to assert that a variable/argument is not negative
 #ifdef __CPPCHECK__
@@ -154,12 +147,16 @@ static const std::string emptyString;
 #define HAS_THREADING_MODEL_THREAD
 #define STDCALL __stdcall
 #elif ((defined(__GNUC__) || defined(__sun)) && !defined(__MINGW32__)) || defined(__CPPCHECK__)
+#if !defined(DISALLOW_PROCESS_EXECUTOR)
 #define HAS_THREADING_MODEL_FORK
+#endif
 #if !defined(DISALLOW_THREAD_EXECUTOR)
 #define HAS_THREADING_MODEL_THREAD
 #endif
 #define STDCALL
-#else
+#endif
+
+#if !defined(HAS_THREADING_MODEL_FORK) && !defined(HAS_THREADING_MODEL_THREAD)
 #error "No threading model defined"
 #endif
 
@@ -172,6 +169,9 @@ static const std::string emptyString;
 #define SUPPRESS_WARNING_GCC_POP
 #define SUPPRESS_WARNING_CLANG_PUSH(warning) SUPPRESS_WARNING_PUSH(warning)
 #define SUPPRESS_WARNING_CLANG_POP SUPPRESS_WARNING_POP
+#define FORCE_WARNING_PUSH(warn) _Pragma("clang diagnostic push") _Pragma(STRINGISIZE(clang diagnostic warning warn))
+#define FORCE_WARNING_CLANG_PUSH(warning) FORCE_WARNING_PUSH(warning)
+#define FORCE_WARNING_CLANG_POP SUPPRESS_WARNING_POP
 #elif defined(__GNUC__)
 #define SUPPRESS_WARNING_PUSH(warning) _Pragma("GCC diagnostic push") _Pragma(STRINGISIZE(GCC diagnostic ignored warning))
 #define SUPPRESS_WARNING_POP _Pragma("GCC diagnostic pop")
@@ -179,6 +179,9 @@ static const std::string emptyString;
 #define SUPPRESS_WARNING_GCC_POP SUPPRESS_WARNING_POP
 #define SUPPRESS_WARNING_CLANG_PUSH(warning)
 #define SUPPRESS_WARNING_CLANG_POP
+#define FORCE_WARNING_PUSH(warning)
+#define FORCE_WARNING_CLANG_PUSH(warning)
+#define FORCE_WARNING_CLANG_POP
 #else
 #define SUPPRESS_WARNING_PUSH(warning)
 #define SUPPRESS_WARNING_POP
@@ -186,15 +189,23 @@ static const std::string emptyString;
 #define SUPPRESS_WARNING_GCC_POP
 #define SUPPRESS_WARNING_CLANG_PUSH(warning)
 #define SUPPRESS_WARNING_CLANG_POP
+#define FORCE_WARNING_PUSH(warning)
+#define FORCE_WARNING_CLANG_PUSH(warning)
+#define FORCE_WARNING_CLANG_POP
 #endif
 
 #if !defined(NO_WINDOWS_SEH) && defined(_WIN32) && defined(_MSC_VER)
 #define USE_WINDOWS_SEH
 #endif
 
-// TODO: __GLIBC__ is dependent on the features.h include and not a built-in compiler define, so it might be problematic to depend on it
-#if !defined(NO_UNIX_BACKTRACE_SUPPORT) && defined(__GNUC__) && defined(__GLIBC__) && !defined(__CYGWIN__) && !defined(__MINGW32__) && !defined(__NetBSD__) && !defined(__SVR4) && !defined(__QNX__)
+#if !defined(NO_UNIX_BACKTRACE_SUPPORT)
+#if defined(HAVE_EXECINFO_H)
+#if HAVE_EXECINFO_H
 #define USE_UNIX_BACKTRACE_SUPPORT
+#endif
+#elif __has_include(<execinfo.h>)
+#define USE_UNIX_BACKTRACE_SUPPORT
+#endif
 #endif
 
 #if !defined(NO_UNIX_SIGNAL_HANDLING) && defined(__GNUC__) && !defined(__MINGW32__) && !defined(__OS2__)

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,8 +26,8 @@
 #include "tokenlist.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -39,8 +39,6 @@ public:
     TestLibrary() : TestFixture("TestLibrary") {}
 
 private:
-    const Settings settings;
-
     void run() override {
         TEST_CASE(isCompliantValidationExpression);
         TEST_CASE(empty);
@@ -65,9 +63,12 @@ private:
         TEST_CASE(resource);
         TEST_CASE(podtype);
         TEST_CASE(container);
+        TEST_CASE(containerActionToFromString);
+        TEST_CASE(containerYieldToFromString);
         TEST_CASE(version);
         TEST_CASE(loadLibErrors);
         TEST_CASE(loadLibCombinations);
+        TEST_CASE(smartpointer);
     }
 
     void isCompliantValidationExpression() const {
@@ -108,7 +109,7 @@ private:
                                    "  </function>\n"
                                    "</def>";
 
-        const char code[] = "foo();";
+        const char code[] = "foo();\n";
         SimpleTokenList tokenList(code);
         tokenList.front()->next()->astOperand1(tokenList.front());
 
@@ -130,13 +131,13 @@ private:
         Library library;
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
         {
-            const char code[] = "fred.foo(123);"; // <- wrong scope, not library function
+            const char code[] = "fred.foo(123);\n"; // <- wrong scope, not library function
             const SimpleTokenList tokenList(code);
 
             ASSERT(library.isNotLibraryFunction(tokenList.front()->tokAt(2)));
         }
         {
-            const char code[] = "Fred::foo(123);"; // <- wrong scope, not library function
+            const char code[] = "Fred::foo(123);\n"; // <- wrong scope, not library function
             const SimpleTokenList tokenList(code);
 
             ASSERT(library.isNotLibraryFunction(tokenList.front()->tokAt(2)));
@@ -151,9 +152,9 @@ private:
                                    "  </function>\n"
                                    "</def>";
 
-        TokenList tokenList(&settings);
-        std::istringstream istr("foo();"); // <- too few arguments, not library function
-        ASSERT(tokenList.createTokens(istr, Standards::Language::CPP));
+        TokenList tokenList(settingsDefault, Standards::Language::CPP);
+        const char code[] = "foo();\n"; // <- too few arguments, not library function
+        ASSERT(tokenList.createTokensFromString(code));
         Token::createMutualLinks(tokenList.front()->next(), tokenList.back()->previous());
         tokenList.createAst();
 
@@ -175,36 +176,40 @@ private:
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
 
         {
-            TokenList tokenList(&settings);
-            std::istringstream istr("foo();"); // <- too few arguments, not library function
-            ASSERT(tokenList.createTokens(istr, Standards::Language::CPP));
+            TokenList tokenList(settingsDefault, Standards::Language::CPP);
+            const char code[] = "foo();\n"; // <- too few arguments, not library function
+            ASSERT(tokenList.createTokensFromString(code));
             Token::createMutualLinks(tokenList.front()->next(), tokenList.back()->previous());
             tokenList.createAst();
 
             ASSERT(library.isNotLibraryFunction(tokenList.front()));
         }
         {
-            TokenList tokenList(&settings);
-            std::istringstream istr("foo(a);"); // <- library function
-            ASSERT(tokenList.createTokens(istr, Standards::Language::CPP));
+            TokenList tokenList(settingsDefault, Standards::Language::CPP);
+            const char code[] = "foo(a);\n"; // <- library function
+            ASSERT(tokenList.createTokensFromString(code));
             Token::createMutualLinks(tokenList.front()->next(), tokenList.back()->previous());
             tokenList.createAst();
 
-            ASSERT(!library.isNotLibraryFunction(tokenList.front()));
+            const Library::Function* func = nullptr;
+            ASSERT(!library.isNotLibraryFunction(tokenList.front(), &func));
+            ASSERT(func);
         }
         {
-            TokenList tokenList(&settings);
-            std::istringstream istr("foo(a, b);"); // <- library function
-            ASSERT(tokenList.createTokens(istr, Standards::Language::CPP));
+            TokenList tokenList(settingsDefault, Standards::Language::CPP);
+            const char code[] = "foo(a, b);\n"; // <- library function
+            ASSERT(tokenList.createTokensFromString(code));
             Token::createMutualLinks(tokenList.front()->next(), tokenList.back()->previous());
             tokenList.createAst();
 
-            ASSERT(!library.isNotLibraryFunction(tokenList.front()));
+            const Library::Function* func = nullptr;
+            ASSERT(!library.isNotLibraryFunction(tokenList.front(), &func));
+            ASSERT(func);
         }
         {
-            TokenList tokenList(&settings);
-            std::istringstream istr("foo(a, b, c);"); // <- too much arguments, not library function
-            ASSERT(tokenList.createTokens(istr, Standards::Language::CPP));
+            TokenList tokenList(settingsDefault, Standards::Language::CPP);
+            const char code[] = "foo(a, b, c);\n"; // <- too much arguments, not library function
+            ASSERT(tokenList.createTokensFromString(code));
             Token::createMutualLinks(tokenList.front()->next(), tokenList.back()->previous());
             tokenList.createAst();
 
@@ -220,7 +225,7 @@ private:
                                    "  </function>\n"
                                    "</def>";
 
-        const char code[] = "Fred foo(123);"; // <- Variable declaration, not library function
+        const char code[] = "Fred foo(123);\n"; // <- Variable declaration, not library function
         SimpleTokenList tokenList(code);
         tokenList.front()->next()->astOperand1(tokenList.front());
         tokenList.front()->next()->varId(1);
@@ -244,13 +249,14 @@ private:
 
         Library library;
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
-        ASSERT_EQUALS(0, library.functions().at("foo").argumentChecks.at(1).notuninit);
-        ASSERT_EQUALS(true, library.functions().at("foo").argumentChecks.at(2).notnull);
-        ASSERT_EQUALS(true, library.functions().at("foo").argumentChecks.at(3).formatstr);
-        ASSERT_EQUALS(true, library.functions().at("foo").argumentChecks.at(4).strz);
-        ASSERT_EQUALS(false, library.functions().at("foo").argumentChecks.at(4).optional);
-        ASSERT_EQUALS(true, library.functions().at("foo").argumentChecks.at(5).notbool);
-        ASSERT_EQUALS(true, library.functions().at("foo").argumentChecks.at(5).optional);
+        const auto& foo_fn_args = library.functions().at("foo").argumentChecks;
+        ASSERT_EQUALS(0, foo_fn_args.at(1).notuninit);
+        ASSERT_EQUALS(true, foo_fn_args.at(2).notnull);
+        ASSERT_EQUALS(true, foo_fn_args.at(3).formatstr);
+        ASSERT_EQUALS(true, foo_fn_args.at(4).strz);
+        ASSERT_EQUALS(false, foo_fn_args.at(4).optional);
+        ASSERT_EQUALS(true, foo_fn_args.at(5).notbool);
+        ASSERT_EQUALS(true, foo_fn_args.at(5).optional);
     }
 
     void function_arg_any() const {
@@ -279,7 +285,7 @@ private:
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
         ASSERT_EQUALS(0, library.functions().at("foo").argumentChecks.at(-1).notuninit);
 
-        const char code[] = "foo(a,b,c,d,e);";
+        const char code[] = "foo(a,b,c,d,e);\n";
         SimpleTokenList tokenList(code);
         tokenList.front()->next()->astOperand1(tokenList.front());
 
@@ -303,7 +309,7 @@ private:
         Library library;
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
 
-        const char code[] = "foo(a,b,c,d);";
+        const char code[] = "foo(a,b,c,d);\n";
         SimpleTokenList tokenList(code);
         tokenList.front()->next()->astOperand1(tokenList.front());
 
@@ -334,130 +340,130 @@ private:
         Library library;
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
 
-        const char code[] = "foo(a,b,c,d,e,f,g,h,i,j,k);";
+        const char code[] = "foo(a,b,c,d,e,f,g,h,i,j,k);\n";
         SimpleTokenList tokenList(code);
         tokenList.front()->next()->astOperand1(tokenList.front());
 
         // 1-
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 1, -10));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 1, -10.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 1, 0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 1, 0.0));
-        ASSERT_EQUALS(true, library.isIntArgValid(tokenList.front(), 1, 1));
-        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 1, 1.0));
-        ASSERT_EQUALS(true, library.isIntArgValid(tokenList.front(), 1, 10));
-        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 1, 10.0));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 1, -10, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 1, -10.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 1, 0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 1, 0.0, settingsDefault));
+        ASSERT_EQUALS(true, library.isIntArgValid(tokenList.front(), 1, 1, settingsDefault));
+        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 1, 1.0, settingsDefault));
+        ASSERT_EQUALS(true, library.isIntArgValid(tokenList.front(), 1, 10, settingsDefault));
+        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 1, 10.0, settingsDefault));
 
         // -7-0
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 2, -10));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, -10.0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, -7.5));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, -7.1));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 2, -7));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, -7.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 2, -3));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, -3.0));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, -3.5));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 2, 0));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, 0.0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, 0.5));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 2, 1));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, 1.0));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 2, -10, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, -10.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, -7.5, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, -7.1, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 2, -7, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, -7.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 2, -3, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, -3.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, -3.5, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 2, 0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 2, 0.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, 0.5, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 2, 1, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 2, 1.0, settingsDefault));
 
         // 1-5,8
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 0.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 1));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 3, 1.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 3));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 3, 3.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 5));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 3, 5.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 6));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 6.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 7));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 7.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 8));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 8.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 9));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 9.0));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 0.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 1, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 3, 1.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 3, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 3, 3.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 5, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 3, 5.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 6, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 6.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 7, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 7.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 3, 8, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 8.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 3, 9, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 3, 9.0, settingsDefault));
 
         // -1,5
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 4, -10));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, -10.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 4, -1));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, -1.0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, 5.000001));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, 5.5));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 4, -10, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, -10.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 4, -1, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, -1.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, 5.000001, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 4, 5.5, settingsDefault));
 
         // :1,5
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 5, -10));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 5, -10.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 5, 1));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 5, 1.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 5, 2));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 5, 2.0));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 5, -10, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 5, -10.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 5, 1, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 5, 1.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 5, 2, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 5, 2.0, settingsDefault));
 
         // 1.5:
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 6, 0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 6, 0.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 6, 1));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 6, 1.499999));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 6, 1.5));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 6, 2));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 6, 10));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 6, 0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 6, 0.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 6, 1, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 6, 1.499999, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 6, 1.5, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 6, 2, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 6, 10, settingsDefault));
 
         // -6.7:-5.5,-3.3:-2.7
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, -7));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -7.0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -6.7000001));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -6.7));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 7, -6));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -6.0));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -5.5));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -5.4999999));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -3.3000001));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -3.3));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 7, -3));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -3.0));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -2.7));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -2.6999999));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, -2));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -2.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, 0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, 0.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, 3));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, 3.0));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, 6));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, 6.0));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, -7, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -7.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -6.7000001, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -6.7, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 7, -6, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -6.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -5.5, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -5.4999999, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -3.3000001, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -3.3, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 7, -3, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -3.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 7, -2.7, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -2.6999999, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, -2, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, -2.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, 0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, 0.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, 3, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, 3.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 7, 6, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 7, 6.0, settingsDefault));
 
         // 0.0:
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 8, -1));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 8, -1.0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 8, -0.00000001));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 8, 0));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 8, 0.0));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 8, 0.000000001));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 8, 1));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 8, 1.0));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 8, -1, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 8, -1.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 8, -0.00000001, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 8, 0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 8, 0.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 8, 0.000000001, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 8, 1, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 8, 1.0, settingsDefault));
 
         // :2.0
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 9, -1));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 9, -1.0));
-        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 9, 2));
-        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 9, 2.0));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 9, 2.00000001));
-        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 9, 200));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 9, 200.0));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 9, -1, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 9, -1.0, settingsDefault));
+        ASSERT_EQUALS(true,  library.isIntArgValid(tokenList.front(), 9, 2, settingsDefault));
+        ASSERT_EQUALS(true,  library.isFloatArgValid(tokenList.front(), 9, 2.0, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 9, 2.00000001, settingsDefault));
+        ASSERT_EQUALS(false, library.isIntArgValid(tokenList.front(), 9, 200, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 9, 200.0, settingsDefault));
 
         // 0.0
-        ASSERT_EQUALS(true, library.isIntArgValid(tokenList.front(), 10, 0));
-        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 10, 0.0));
+        ASSERT_EQUALS(true, library.isIntArgValid(tokenList.front(), 10, 0, settingsDefault));
+        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 10, 0.0, settingsDefault));
 
         // ! 0.0
-        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 11, -0.42));
-        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 11, 0.0));
-        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 11, 0.42));
+        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 11, -0.42, settingsDefault));
+        ASSERT_EQUALS(false, library.isFloatArgValid(tokenList.front(), 11, 0.0, settingsDefault));
+        ASSERT_EQUALS(true, library.isFloatArgValid(tokenList.front(), 11, 0.42, settingsDefault));
     }
 
     void function_arg_minsize() const {
@@ -475,7 +481,7 @@ private:
         Library library;
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
 
-        const char code[] = "foo(a,b,c,d,e);";
+        const char code[] = "foo(a,b,c,d,e);\n";
         SimpleTokenList tokenList(code);
         tokenList.front()->next()->astOperand1(tokenList.front());
 
@@ -537,13 +543,13 @@ private:
         ASSERT(library.functions().at("bar").argumentChecks.empty());
 
         {
-            const char code[] = "Foo::foo();";
+            const char code[] = "Foo::foo();\n";
             const SimpleTokenList tokenList(code);
             ASSERT(library.isnotnoreturn(tokenList.front()->tokAt(2)));
         }
 
         {
-            const char code[] = "bar();";
+            const char code[] = "bar();\n";
             const SimpleTokenList tokenList(code);
             ASSERT(library.isnotnoreturn(tokenList.front()));
         }
@@ -562,15 +568,15 @@ private:
         ASSERT_EQUALS(library.functions().size(), 1U);
 
         {
-            SimpleTokenizer tokenizer(settings, *this);
-            const char code[] = "CString str; str.Format();";
+            SimpleTokenizer tokenizer(settingsDefault, *this);
+            const char code[] = "CString str; str.Format();\n";
             ASSERT(tokenizer.tokenize(code));
             ASSERT(library.isnotnoreturn(Token::findsimplematch(tokenizer.tokens(), "Format")));
         }
 
         {
-            SimpleTokenizer tokenizer(settings, *this);
-            const char code[] = "HardDrive hd; hd.Format();";
+            SimpleTokenizer tokenizer(settingsDefault, *this);
+            const char code[] = "HardDrive hd; hd.Format();\n";
             ASSERT(tokenizer.tokenize(code));
             ASSERT(!library.isnotnoreturn(Token::findsimplematch(tokenizer.tokens(), "Format")));
         }
@@ -588,15 +594,15 @@ private:
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
 
         {
-            SimpleTokenizer tokenizer(settings, *this);
-            const char code[] = "struct X : public Base { void dostuff() { f(0); } };";
+            SimpleTokenizer tokenizer(settingsDefault, *this);
+            const char code[] = "struct X : public Base { void dostuff() { f(0); } };\n";
             ASSERT(tokenizer.tokenize(code));
             ASSERT(library.isnullargbad(Token::findsimplematch(tokenizer.tokens(), "f"),1));
         }
 
         {
-            SimpleTokenizer tokenizer(settings, *this);
-            const char code[] = "struct X : public Base { void dostuff() { f(1,2); } };";
+            SimpleTokenizer tokenizer(settingsDefault, *this);
+            const char code[] = "struct X : public Base { void dostuff() { f(1,2); } };\n";
             ASSERT(tokenizer.tokenize(code));
             ASSERT(!library.isnullargbad(Token::findsimplematch(tokenizer.tokens(), "f"),1));
         }
@@ -616,13 +622,13 @@ private:
         Library library;
         ASSERT(LibraryHelper::loadxmldata(library, xmldata, sizeof(xmldata)));
 
-        const char code[] = "a(); b();";
+        const char code[] = "a(); b();\n";
         const SimpleTokenList tokenList(code);
 
         const Library::WarnInfo* a = library.getWarnInfo(tokenList.front());
         const Library::WarnInfo* b = library.getWarnInfo(tokenList.front()->tokAt(4));
 
-        ASSERT_EQUALS(2, library.functionwarn.size());
+        ASSERT_EQUALS(2, library.functionwarn().size());
         ASSERT(a && b);
         if (a && b) {
             ASSERT_EQUALS("Message", a->message);
@@ -802,6 +808,8 @@ private:
                                    "    <type string=\"std-like\"/>\n"
                                    "    <access indexOperator=\"array-like\"/>\n"
                                    "  </container>\n"
+                                   "  <container id=\"E\" startPattern=\"std :: E\"/>\n"
+                                   "  <container id=\"F\" startPattern=\"std :: F\" itEndPattern=\":: iterator\"/>\n"
                                    "</def>";
 
         Library library;
@@ -810,6 +818,8 @@ private:
         const Library::Container& A = library.containers().at("A");
         const Library::Container& B = library.containers().at("B");
         const Library::Container& C = library.containers().at("C");
+        const Library::Container& E = library.containers().at("E");
+        const Library::Container& F = library.containers().at("F");
 
         ASSERT_EQUALS(A.type_templateArgNo, 1);
         ASSERT_EQUALS(A.size_templateArgNo, 4);
@@ -850,8 +860,19 @@ private:
         ASSERT_EQUALS(C.stdStringLike, true);
         ASSERT_EQUALS(C.arrayLike_indexOp, true);
 
+        ASSERT_EQUALS(E.startPattern, "std :: E");
+        ASSERT_EQUALS(E.endPattern, "");
+        ASSERT_EQUALS(E.itEndPattern, "");
+
+        ASSERT_EQUALS(F.startPattern, "std :: F");
+        ASSERT_EQUALS(F.endPattern, "");
+        ASSERT_EQUALS(F.itEndPattern, ":: iterator");
+
+        ASSERT(!library.detectContainerOrIterator(nullptr));
+
         {
-            const SimpleTokenizer var(*this, "std::A<int> a;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::A<int> a;\n"));
             ASSERT_EQUALS(&A, library.detectContainer(var.tokens()));
             ASSERT(!library.detectIterator(var.tokens()));
             bool isIterator;
@@ -860,14 +881,16 @@ private:
         }
 
         {
-            const SimpleTokenizer var(*this, "std::A<int>::size_type a_s;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::A<int>::size_type a_s;\n"));
             ASSERT(!library.detectContainer(var.tokens()));
             ASSERT(!library.detectIterator(var.tokens()));
             ASSERT(!library.detectContainerOrIterator(var.tokens()));
         }
 
         {
-            const SimpleTokenizer var(*this, "std::A<int>::iterator a_it;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::A<int>::iterator a_it;\n"));
             ASSERT(!library.detectContainer(var.tokens()));
             ASSERT_EQUALS(&A, library.detectIterator(var.tokens()));
             bool isIterator;
@@ -876,7 +899,8 @@ private:
         }
 
         {
-            const SimpleTokenizer var(*this, "std::B<int> b;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::B<int> b;\n"));
             ASSERT_EQUALS(&B, library.detectContainer(var.tokens()));
             ASSERT(!library.detectIterator(var.tokens()));
             bool isIterator;
@@ -885,14 +909,16 @@ private:
         }
 
         {
-            const SimpleTokenizer var(*this, "std::B<int>::size_type b_s;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::B<int>::size_type b_s;\n"));
             ASSERT(!library.detectContainer(var.tokens()));
             ASSERT(!library.detectIterator(var.tokens()));
             ASSERT(!library.detectContainerOrIterator(var.tokens()));
         }
 
         {
-            const SimpleTokenizer var(*this, "std::B<int>::iterator b_it;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::B<int>::iterator b_it;\n"));
             ASSERT(!library.detectContainer(var.tokens()));
             ASSERT_EQUALS(&B, library.detectIterator(var.tokens()));
             bool isIterator;
@@ -901,21 +927,99 @@ private:
         }
 
         {
-            const SimpleTokenizer var(*this, "C c;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("C c;\n"));
             ASSERT(!library.detectContainer(var.tokens()));
             ASSERT(!library.detectIterator(var.tokens()));
             ASSERT(!library.detectContainerOrIterator(var.tokens()));
         }
 
         {
-            const SimpleTokenizer var(*this, "D d;");
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("D d;\n"));
             ASSERT(!library.detectContainer(var.tokens()));
             ASSERT(!library.detectIterator(var.tokens()));
             ASSERT(!library.detectContainerOrIterator(var.tokens()));
         }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::E e;\n"));
+            ASSERT(library.detectContainer(var.tokens()));
+            ASSERT(!library.detectIterator(var.tokens()));
+            bool isIterator;
+            ASSERT_EQUALS(&E, library.detectContainerOrIterator(var.tokens(), &isIterator));
+            ASSERT(!isIterator);
+            ASSERT(!library.detectContainerOrIterator(var.tokens(), nullptr, true));
+        }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("E e;\n"));
+            ASSERT(!library.detectContainer(var.tokens()));
+            ASSERT(!library.detectIterator(var.tokens()));
+            ASSERT(!library.detectContainerOrIterator(var.tokens()));
+            ASSERT_EQUALS(&E, library.detectContainerOrIterator(var.tokens(), nullptr, true));
+        }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::E::iterator I;\n"));
+            ASSERT(!library.detectContainer(var.tokens()));
+            ASSERT(!library.detectIterator(var.tokens()));
+            ASSERT(!library.detectContainerOrIterator(var.tokens()));
+            ASSERT(!library.detectContainerOrIterator(var.tokens(), nullptr, true));
+        }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::E::size_type p;\n"));
+            ASSERT(!library.detectContainer(var.tokens()));
+            ASSERT(!library.detectIterator(var.tokens()));
+            ASSERT(!library.detectContainerOrIterator(var.tokens()));
+            ASSERT(!library.detectContainerOrIterator(var.tokens(), nullptr, true));
+        }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::F f;\n"));
+            ASSERT(library.detectContainer(var.tokens()));
+            ASSERT(!library.detectIterator(var.tokens()));
+            bool isIterator;
+            ASSERT_EQUALS(&F, library.detectContainerOrIterator(var.tokens(), &isIterator));
+            ASSERT(!isIterator);
+        }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("std::F::iterator I;\n"));
+            ASSERT(!library.detectContainer(var.tokens()));
+            TODO_ASSERT(library.detectIterator(var.tokens()));
+            bool isIterator = false;
+            TODO_ASSERT_EQUALS(reinterpret_cast<intptr_t>(&F), 0, reinterpret_cast<intptr_t>(library.detectContainerOrIterator(var.tokens(), &isIterator)));
+            TODO_ASSERT(isIterator);
+        }
+
+        {
+            SimpleTokenizer var(*this);
+            ASSERT(var.tokenize("F::iterator I;\n"));
+            ASSERT(!library.detectContainer(var.tokens()));
+            ASSERT(!library.detectIterator(var.tokens()));
+            ASSERT(!library.detectContainerOrIterator(var.tokens()));
+            bool isIterator = false;
+            TODO_ASSERT_EQUALS(reinterpret_cast<intptr_t>(&F), 0, reinterpret_cast<intptr_t>(library.detectContainerOrIterator(var.tokens(), &isIterator, true)));
+            TODO_ASSERT(isIterator);
+        }
     }
 
-#define LOADLIBERROR(xmldata, errorcode) loadLibError(xmldata, errorcode, __FILE__, __LINE__)
+#define LOADLIBERROR(...) loadLibError(__FILE__, __LINE__, __VA_ARGS__)
+    template<std::size_t size>
+    void loadLibError(const char* file, unsigned line, const char (&xmldata)[size], Library::ErrorCode errorcode) const {
+        Library library;
+        Library::Error liberr;
+        assertEquals(file, line, true, LibraryHelper::loadxmldata(library, liberr, xmldata, size-1));
+        assertEquals(file, line, true, errorcode == liberr.errorcode);
+    }
 
     void version() const {
         {
@@ -940,12 +1044,20 @@ private:
         }
     }
 
-    template<std::size_t size>
-    void loadLibError(const char (&xmldata)[size], Library::ErrorCode errorcode, const char* file, unsigned line) const {
-        Library library;
-        Library::Error liberr;
-        assertEquals(file, line, true, LibraryHelper::loadxmldata(library, liberr, xmldata, size-1));
-        assertEquals(file, line, true, errorcode == liberr.errorcode);
+    void containerActionToFromString() const {
+        for (uint16_t i = 0; i < static_cast<uint16_t>(Library::Container::Action::NO_ACTION); ++i) {
+            const auto a = static_cast<Library::Container::Action>(i);
+            const std::string& s = Library::Container::toString(a);
+            ASSERT_EQUALS(i, static_cast<uint16_t>(Library::Container::actionFrom(s)));
+        }
+    }
+
+    void containerYieldToFromString() const {
+        for (uint16_t i = 0; i < static_cast<uint16_t>(Library::Container::Yield::NO_YIELD); ++i) {
+            const auto y = static_cast<Library::Container::Yield>(i);
+            const std::string& s = Library::Container::toString(y);
+            ASSERT_EQUALS(i, static_cast<uint16_t>(Library::Container::yieldFrom(s)));
+        }
     }
 
 #define LOADLIB_ERROR_INVALID_RANGE(valid) LOADLIBERROR("<?xml version=\"1.0\"?>\n" \
@@ -1049,16 +1161,25 @@ private:
     void loadLibCombinations() const {
         {
             const Settings s = settingsBuilder().library("std.cfg").library("gnu.cfg").library("bsd.cfg").build();
-            ASSERT_EQUALS(s.library.defines.empty(), false);
+            ASSERT_EQUALS(s.library.defines().empty(), false);
         }
         {
             const Settings s = settingsBuilder().library("std.cfg").library("microsoft_sal.cfg").build();
-            ASSERT_EQUALS(s.library.defines.empty(), false);
+            ASSERT_EQUALS(s.library.defines().empty(), false);
         }
         {
             const Settings s = settingsBuilder().library("std.cfg").library("windows.cfg").library("mfc.cfg").build();
-            ASSERT_EQUALS(s.library.defines.empty(), false);
+            ASSERT_EQUALS(s.library.defines().empty(), false);
         }
+    }
+
+    void smartpointer() const {
+        const Settings s = settingsBuilder().library("std.cfg").build();
+        const Library& library = s.library;
+
+        ASSERT(!library.detectSmartPointer(nullptr));
+
+        // TODO: add more tests
     }
 };
 

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,9 +21,15 @@
 #include "helpers.h"
 #include "standards.h"
 
+#include <initializer_list>
+#include <list>
 #include <set>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <stdexcept>
+#endif
 
 class TestPath : public TestFixture {
 public:
@@ -47,6 +53,11 @@ private:
         TEST_CASE(identify);
         TEST_CASE(identifyWithCppProbe);
         TEST_CASE(is_header);
+        TEST_CASE(simplifyPath);
+        TEST_CASE(getAbsolutePath);
+        TEST_CASE(exists);
+        TEST_CASE(fromNativeSeparators);
+        TEST_CASE(isRelative);
     }
 
     void removeQuotationMarks() const {
@@ -72,6 +83,16 @@ private:
         ASSERT(Path::acceptFile("index")==false);
         ASSERT(Path::acceptFile("")==false);
         ASSERT(Path::acceptFile("C")==false);
+        {
+            Standards::Language lang;
+            ASSERT(Path::acceptFile("index.c", &lang));
+            ASSERT_EQUALS_ENUM(Standards::Language::C, lang);
+        }
+        {
+            Standards::Language lang;
+            ASSERT(Path::acceptFile("index.cpp", &lang));
+            ASSERT_EQUALS_ENUM(Standards::Language::CPP, lang);
+        }
 
         // don't accept any headers
         ASSERT_EQUALS(false, Path::acceptFile("index.h"));
@@ -84,6 +105,21 @@ private:
         ASSERT(Path::acceptFile("index.header", extra));
         ASSERT(Path::acceptFile("index.h", extra)==false);
         ASSERT(Path::acceptFile("index.hpp", extra)==false);
+        {
+            Standards::Language lang;
+            ASSERT(Path::acceptFile("index.c", extra, &lang));
+            ASSERT_EQUALS_ENUM(Standards::Language::C, lang);
+        }
+        {
+            Standards::Language lang;
+            ASSERT(Path::acceptFile("index.cpp", extra, &lang));
+            ASSERT_EQUALS_ENUM(Standards::Language::CPP, lang);
+        }
+        {
+            Standards::Language lang;
+            ASSERT(Path::acceptFile("index.extra", extra, &lang));
+            ASSERT_EQUALS_ENUM(Standards::Language::None, lang);
+        }
     }
 
     void getCurrentPath() const {
@@ -137,11 +173,38 @@ private:
     }
 
     void join() const {
+        ASSERT_EQUALS("", Path::join("", ""));
+        ASSERT_EQUALS("b", Path::join("", "b"));
+        ASSERT_EQUALS("/b", Path::join("", "/b"));
+        ASSERT_EQUALS("/b", Path::join("", "\\b"));
+
         ASSERT_EQUALS("a", Path::join("a", ""));
-        ASSERT_EQUALS("a", Path::join("", "a"));
         ASSERT_EQUALS("a/b", Path::join("a", "b"));
-        ASSERT_EQUALS("a/b", Path::join("a/", "b"));
         ASSERT_EQUALS("/b", Path::join("a", "/b"));
+        ASSERT_EQUALS("/b", Path::join("a", "\\b"));
+
+        ASSERT_EQUALS("a/", Path::join("a/", ""));
+        ASSERT_EQUALS("a/b", Path::join("a/", "b"));
+        ASSERT_EQUALS("/b", Path::join("a/", "/b"));
+        ASSERT_EQUALS("/b", Path::join("a/", "\\b"));
+
+        ASSERT_EQUALS("a/", Path::join("a\\", ""));
+        ASSERT_EQUALS("a/b", Path::join("a\\", "b"));
+        ASSERT_EQUALS("/b", Path::join("a\\", "/b"));
+        ASSERT_EQUALS("/b", Path::join("a\\", "\\b"));
+
+        // TODO: how to absolute Windows path in path2?
+        //ASSERT_EQUALS("", Path::join("a", "s:/b"));
+
+        //ASSERT_EQUALS("", Path::join("S:\\a", "S:/b"));
+        //ASSERT_EQUALS("", Path::join("S:\\a", "S:\\b"));
+        //ASSERT_EQUALS("", Path::join("S:\\a", "/b"));
+
+        //ASSERT_EQUALS("", Path::join("S:/a", "S:/b"));
+        //ASSERT_EQUALS("", Path::join("S:/a", "S:\\b"));
+        //ASSERT_EQUALS("", Path::join("S:/a", "/b"));
+
+        ASSERT_EQUALS("a/b/c", Path::join("a", "b", "c"));
     }
 
     void isDirectory() const {
@@ -255,7 +318,7 @@ private:
         ASSERT_EQUALS(Standards::Language::CPP, Path::identify("/mnt/c/foo/index.cpp", false));
         ASSERT_EQUALS(Standards::Language::CPP, Path::identify("/mnt/c/foo/index.Cpp", false));
 
-        // TODO: check for case-insenstive filesystem instead
+        // TODO: check for case-insensitive filesystem instead
         // In unix .C is considered C++
 #if !defined(_WIN32) && !(defined(__APPLE__) && defined(__MACH__))
         ASSERT_EQUALS(Standards::Language::CPP, Path::identify("index.C", false));
@@ -316,21 +379,26 @@ private:
             "// -*- c++ -*-",
             "// -*- mode: c++; -*-",
 
-            //"/* -*- C++ -*- */"
+            "/* -*- C++ -*- */",
+            "/* -*- C++ -*-",
 
             "//-*- C++ -*-",
             " //-*- C++ -*-",
             "\t//-*- C++ -*-",
             "\t //-*- C++ -*-",
             " \t//-*- C++ -*-",
+            "//-*- C++ -*- ",
+            "//-*- C++ -*- \n",
             "// -----*- C++ -*-----",
             "// comment-*- C++ -*-comment",
+            "// -*- C++ -*-\n",
             "//-*- C++ -*-\r// comment",
             "//-*- C++ -*-\n// comment",
             "//-*- C++ -*-\r\n// comment",
 
-            //"/* -*-C++-*- */"
-            //"/*-*-C++-*-*/"
+            "/* -*-C++-*- */",
+            "/*-*-C++-*-*/",
+            " /*-*-C++-*-*/",
         };
 
         for (const auto& f : { "cppprobe.h", "cppprobe" }) {
@@ -344,15 +412,26 @@ private:
             "// -*- C++", // no end marker
             "// -*- C++ --*-", // incorrect end marker
             "// -*- C++/-*-", // unexpected character
-            "// comment\n// -*-C", // not on the first line
-            "// comment\r// -*-C", // not on the first line
-            "// comment\r\n// -*-C", // not on the first line
+            "// comment\n// -*- C++ -*-", // not on the first line
+            "// comment\r// -*- C++ -*-", // not on the first line
+            "// comment\r\n// -*- C++ -*-", // not on the first line
             "// -*- C -*-",
             "// -*- Mode: C; -*-",
             "// -*- f90 -*-",
             "// -*- fortran -*-",
             "// -*- c-basic-offset: 2 -*-",
-            "// -*- c-basic-offset:4; indent-tabs-mode:nil -*-"
+            "// -*- c-basic-offset:4; indent-tabs-mode:nil -*-",
+            "// ", // no marker
+            "// -*-", // incomplete marker
+            "/*", // no marker
+            "/**/", // no marker
+            "/*\n*/", // no marker
+            "/* */", // no marker
+            "/* \n*/", // no marker
+            "/* -*-", // incomplete marker
+            "/* \n-*-", // incomplete marker
+            "/* \n-*- C++ -*-", // not on the first line
+            "/* \n-*- C++ -*- */" // not on the first line
         };
 
         for (const auto& m : markers_c) {
@@ -375,6 +454,200 @@ private:
         ASSERT(Path::isHeader("index.header")==false);
         ASSERT(Path::isHeader("index.htm")==false);
         ASSERT(Path::isHeader("index.html")==false);
+    }
+
+    void simplifyPath() const {
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath("file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath("../file.cpp"));
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath("test/../file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath("../test/../file.cpp"));
+
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath("./file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath("./../file.cpp"));
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath("./test/../file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath("./../test/../file.cpp"));
+
+        ASSERT_EQUALS("test/", Path::simplifyPath("test/"));
+        ASSERT_EQUALS("../test/", Path::simplifyPath("../test/"));
+        ASSERT_EQUALS("../", Path::simplifyPath("../test/.."));
+        ASSERT_EQUALS("../", Path::simplifyPath("../test/../"));
+
+        ASSERT_EQUALS("/home/file.cpp", Path::simplifyPath("/home/test/../file.cpp"));
+        ASSERT_EQUALS("/file.cpp", Path::simplifyPath("/home/../test/../file.cpp"));
+
+        ASSERT_EQUALS("C:/home/file.cpp", Path::simplifyPath("C:/home/test/../file.cpp"));
+        ASSERT_EQUALS("C:/file.cpp", Path::simplifyPath("C:/home/../test/../file.cpp"));
+
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath("..\\file.cpp"));
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath("test\\..\\file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath("..\\test\\..\\file.cpp"));
+
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath(".\\file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath(".\\..\\file.cpp"));
+        ASSERT_EQUALS("file.cpp", Path::simplifyPath(".\\test\\..\\file.cpp"));
+        ASSERT_EQUALS("../file.cpp", Path::simplifyPath(".\\..\\test\\..\\file.cpp"));
+
+        ASSERT_EQUALS("test/", Path::simplifyPath("test\\"));
+        ASSERT_EQUALS("../test/", Path::simplifyPath("..\\test\\"));
+        ASSERT_EQUALS("../", Path::simplifyPath("..\\test\\.."));
+        ASSERT_EQUALS("../", Path::simplifyPath("..\\test\\..\\"));
+
+        ASSERT_EQUALS("C:/home/file.cpp", Path::simplifyPath("C:\\home\\test\\..\\file.cpp"));
+        ASSERT_EQUALS("C:/file.cpp", Path::simplifyPath("C:\\home\\..\\test\\..\\file.cpp"));
+
+        ASSERT_EQUALS("//home/file.cpp", Path::simplifyPath("\\\\home\\test\\..\\file.cpp"));
+        ASSERT_EQUALS("//file.cpp", Path::simplifyPath("\\\\home\\..\\test\\..\\file.cpp"));
+    }
+
+    void getAbsolutePath() const {
+        const std::string cwd = Path::getCurrentPath();
+
+        ScopedFile file("testabspath.txt", "");
+        std::string expected = Path::toNativeSeparators(Path::join(cwd, "testabspath.txt"));
+
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath("testabspath.txt"));
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath("./testabspath.txt"));
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath(".\\testabspath.txt"));
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath("test/../testabspath.txt"));
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath("test\\..\\testabspath.txt"));
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath("./test/../testabspath.txt"));
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath(".\\test\\../testabspath.txt"));
+
+        ASSERT_EQUALS(expected, Path::getAbsoluteFilePath(Path::join(cwd, "testabspath.txt")));
+
+        std::string cwd_up = Path::getPathFromFilename(cwd);
+        if (cwd_up != "/")
+            cwd_up.pop_back(); // remove trailing slash
+        ASSERT_EQUALS(cwd_up, Path::getAbsoluteFilePath(Path::join(cwd, "..")));
+        ASSERT_EQUALS(cwd_up, Path::getAbsoluteFilePath(Path::join(cwd, "../")));
+        ASSERT_EQUALS(cwd_up, Path::getAbsoluteFilePath(Path::join(cwd, "..\\")));
+        ASSERT_EQUALS(cwd_up, Path::getAbsoluteFilePath(Path::join(cwd, "./../")));
+        ASSERT_EQUALS(cwd_up, Path::getAbsoluteFilePath(Path::join(cwd, ".\\..\\")));
+
+        ASSERT_EQUALS(cwd, Path::getAbsoluteFilePath("."));
+#ifndef _WIN32
+        TODO_ASSERT_EQUALS(cwd, "", Path::getAbsoluteFilePath("./"));
+        TODO_ASSERT_EQUALS(cwd, "", Path::getAbsoluteFilePath(".\\"));
+#else
+        ASSERT_EQUALS(cwd, Path::getAbsoluteFilePath("./"));
+        ASSERT_EQUALS(cwd, Path::getAbsoluteFilePath(".\\"));
+#endif
+
+        ASSERT_EQUALS("", Path::getAbsoluteFilePath(""));
+
+#ifndef _WIN32
+        // the underlying realpath() call only returns something if the path actually exists
+        ASSERT_THROW_EQUALS(Path::getAbsoluteFilePath("testabspath2.txt"), std::runtime_error, "path 'testabspath2.txt' does not exist");
+#else
+        ASSERT_EQUALS(Path::toNativeSeparators(Path::join(cwd, "testabspath2.txt")), Path::getAbsoluteFilePath("testabspath2.txt"));
+#endif
+
+#ifdef _WIN32
+        // determine an existing drive letter
+        std::string drive = Path::getCurrentPath().substr(0, 2);
+        ASSERT_EQUALS(drive + "", Path::getAbsoluteFilePath(drive + "\\"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "\\path"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "\\path\\"));
+        ASSERT_EQUALS(drive + "\\path\\files.txt", Path::getAbsoluteFilePath(drive + "\\path\\files.txt"));
+        ASSERT_EQUALS(drive + "", Path::getAbsoluteFilePath(drive + "//"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "//path"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "//path/"));
+        ASSERT_EQUALS(drive + "\\path\\files.txt", Path::getAbsoluteFilePath(drive + "//path/files.txt"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "\\\\path"));
+        ASSERT_EQUALS(drive + "", Path::getAbsoluteFilePath(drive + "/"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "/path"));
+
+        drive[0] = static_cast<char>(toupper(drive[0]));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "\\path"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "/path"));
+
+        drive[0] = static_cast<char>(tolower(drive[0]));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "\\path"));
+        ASSERT_EQUALS(drive + "\\path", Path::getAbsoluteFilePath(drive + "/path"));
+
+        ASSERT_EQUALS("1:\\path\\files.txt", Path::getAbsoluteFilePath("1:\\path\\files.txt")); // treated as valid drive
+        ASSERT_EQUALS(
+            Path::toNativeSeparators(Path::join(Path::getCurrentPath(), "CC:\\path\\files.txt")),
+            Path::getAbsoluteFilePath("CC:\\path\\files.txt")); // treated as filename
+        ASSERT_EQUALS("1:\\path\\files.txt", Path::getAbsoluteFilePath("1:/path/files.txt")); // treated as valid drive
+        ASSERT_EQUALS(
+            Path::toNativeSeparators(Path::join(Path::getCurrentPath(), "CC:\\path\\files.txt")),
+            Path::getAbsoluteFilePath("CC:/path/files.txt")); // treated as filename
+#endif
+
+#ifndef _WIN32
+        ASSERT_THROW_EQUALS(Path::getAbsoluteFilePath("C:\\path\\files.txt"), std::runtime_error, "path 'C:\\path\\files.txt' does not exist");
+#endif
+
+        // TODO: test UNC paths
+        // TODO: test with symlinks
+    }
+
+    void exists() const {
+        ScopedFile file("testpath.txt", "", "testpath");
+        ScopedFile file2("testpath2.txt", "");
+
+        ASSERT_EQUALS(true, Path::exists("testpath"));
+        ASSERT_EQUALS(true, Path::exists("testpath2.txt"));
+
+        ASSERT_EQUALS(false, Path::exists("testpath2"));
+
+        bool b = false;
+
+        ASSERT_EQUALS(true, Path::exists("testpath", &b));
+        ASSERT_EQUALS(true, b);
+        ASSERT_EQUALS(true, Path::exists("testpath/testpath.txt", &b));
+        ASSERT_EQUALS(false, b);
+        ASSERT_EQUALS(true, Path::exists("testpath2.txt", &b));
+        ASSERT_EQUALS(false, b);
+
+        ASSERT_EQUALS(false, Path::exists("testpath2", &b));
+        ASSERT_EQUALS(false, b);
+        ASSERT_EQUALS(false, Path::exists("testpath/testpath2.txt", &b));
+        ASSERT_EQUALS(false, b);
+        ASSERT_EQUALS(false, Path::exists("testpath.txt", &b));
+        ASSERT_EQUALS(false, b);
+    }
+
+    void fromNativeSeparators() const {
+        ASSERT_EQUALS("lib/file.c", Path::fromNativeSeparators("lib/file.c"));
+        ASSERT_EQUALS("lib//file.c", Path::fromNativeSeparators("lib//file.c"));
+        ASSERT_EQUALS("/lib/file.c", Path::fromNativeSeparators("/lib/file.c"));
+        ASSERT_EQUALS("//lib/file.c", Path::fromNativeSeparators("//lib/file.c"));
+        ASSERT_EQUALS("./lib/file.c", Path::fromNativeSeparators("./lib/file.c"));
+
+        ASSERT_EQUALS("lib/file.c", Path::fromNativeSeparators("lib\\file.c"));
+        ASSERT_EQUALS("lib//file.c", Path::fromNativeSeparators("lib\\\\file.c"));
+        ASSERT_EQUALS("/lib/file.c", Path::fromNativeSeparators("\\lib\\file.c"));
+        ASSERT_EQUALS("//lib/file.c", Path::fromNativeSeparators("\\\\lib\\file.c"));
+        ASSERT_EQUALS("./lib/file.c", Path::fromNativeSeparators(".\\lib\\file.c"));
+    }
+
+    void isRelative() const {
+        ASSERT_EQUALS(true, Path::isRelative("dir/file"));
+        ASSERT_EQUALS(true, Path::isRelative("dir\\file"));
+
+        // TODO: is this expected?
+        ASSERT_EQUALS(true, Path::isRelative("file/"));
+        ASSERT_EQUALS(true, Path::isRelative("file\\"));
+
+        ASSERT_EQUALS(false, Path::isRelative("file"));
+
+#ifdef _WIN32
+        // this is a relative path on Windows
+        ASSERT_EQUALS(true, Path::isRelative("/dir/file"));
+#else
+        ASSERT_EQUALS(false, Path::isRelative("/dir/file"));
+#endif
+
+#ifdef _WIN32
+        // TODO: this is not detected as absolute path in _WIN32 builds
+        ASSERT_EQUALS(false, Path::isRelative("c:\\dir\\file"));
+        ASSERT_EQUALS(false, Path::isRelative("c:/dir/file"));
+#else
+        ASSERT_EQUALS(true, Path::isRelative("c:\\dir\\file"));
+        ASSERT_EQUALS(true, Path::isRelative("c:/dir/file"));
+#endif
     }
 };
 

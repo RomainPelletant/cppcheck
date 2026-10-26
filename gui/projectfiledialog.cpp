@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,9 +27,11 @@
 #include "platforms.h"
 #include "projectfile.h"
 #include "settings.h"
+#include "utils.h"
 
 #include "ui_projectfile.h"
 
+#include <array>
 #include <list>
 #include <string>
 #include <utility>
@@ -37,17 +39,16 @@
 #include <QByteArray>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFlags>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QMap>
+#include <QObject>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
@@ -57,13 +58,15 @@
 #include <QSpinBox>
 #include <QVariant>
 
-static constexpr char ADDON_MISRA[]   = "misra";
-static constexpr char CODING_STANDARD_MISRA_C_2023[] = "misra-c-2023";
-static constexpr char CODING_STANDARD_MISRA_CPP_2008[] = "misra-cpp-2008";
-static constexpr char CODING_STANDARD_MISRA_CPP_2023[] = "misra-cpp-2023";
-static constexpr char CODING_STANDARD_CERT_C[] = "cert-c-2016";
-static constexpr char CODING_STANDARD_CERT_CPP[] = "cert-cpp-2016";
-static constexpr char CODING_STANDARD_AUTOSAR[] = "autosar";
+const char ADDON_MISRA[]   = "misra";
+const char CODING_STANDARD_MISRA_C_2023[] = "misra-c-2023";
+const char CODING_STANDARD_MISRA_C_2025[] = "misra-c-2025";
+const char CODING_STANDARD_MISRA_CPP_2008[] = "misra-cpp-2008";
+const char CODING_STANDARD_MISRA_CPP_2023[] = "misra-cpp-2023";
+const char CODING_STANDARD_CERT_C[] = "cert-c-2016";
+const char CODING_STANDARD_CERT_CPP[] = "cert-cpp-2016";
+const char CODING_STANDARD_AUTOSAR[] = "autosar";
+const char CODING_STANDARD_SAFETY_PROFILES[] = "safety-profiles";
 
 /** Return paths from QListWidget */
 static QStringList getPaths(const QListWidget *list)
@@ -78,7 +81,7 @@ static QStringList getPaths(const QListWidget *list)
 }
 
 /** Platforms shown in the platform combobox */
-static constexpr Platform::Type builtinPlatforms[] = {
+static const std::array<Platform::Type, 6> builtinPlatforms = {
     Platform::Type::Native,
     Platform::Type::Win32A,
     Platform::Type::Win32W,
@@ -87,16 +90,33 @@ static constexpr Platform::Type builtinPlatforms[] = {
     Platform::Type::Unix64
 };
 
-static constexpr int numberOfBuiltinPlatforms = sizeof(builtinPlatforms) / sizeof(builtinPlatforms[0]);
+static std::string suppressionAsText(const SuppressionList::Suppression& s)
+{
+    std::string ret;
+    if (!s.errorId.empty())
+        ret = s.errorId;
+    if (!s.fileName.empty())
+        ret += " fileName=" + s.fileName;
+    if (s.lineNumber != SuppressionList::Suppression::NO_LINE)
+        ret += " lineNumber=" + std::to_string(s.lineNumber);
+    if (!s.symbolName.empty())
+        ret += " symbolName=" + s.symbolName;
+    if (s.hash > 0)
+        ret += " hash=" + std::to_string(s.hash);
+    if (startsWith(ret," "))
+        return ret.substr(1);
+    return ret;
+}
 
 QStringList ProjectFileDialog::getProjectConfigs(const QString &fileName)
 {
-    if (!fileName.endsWith(".sln") && !fileName.endsWith(".vcxproj"))
+    if (!fileName.endsWith(".sln") && !fileName.endsWith(".slnx") && !fileName.endsWith(".vcxproj"))
         return QStringList();
     QStringList ret;
     ImportProject importer;
     Settings projSettings;
-    importer.import(fileName.toStdString(), &projSettings);
+    Suppressions projSupprs;
+    importer.import(fileName.toStdString(), &projSettings, &projSupprs);
     for (const std::string &cfg : importer.getVSConfigs())
         ret << QString::fromStdString(cfg);
     return ret;
@@ -118,22 +138,10 @@ ProjectFileDialog::ProjectFileDialog(ProjectFile *projectFile, bool premium, QWi
     setWindowTitle(title);
     loadSettings();
 
-    // Checkboxes for the libraries..
-    const QString applicationFilePath = QCoreApplication::applicationFilePath();
-    const QString appPath = QFileInfo(applicationFilePath).canonicalPath();
-    const QString datadir = getDataDir();
-    QStringList searchPaths;
-    searchPaths << appPath << appPath + "/cfg" << inf.canonicalPath();
-#ifdef FILESDIR
-    if (FILESDIR[0])
-        searchPaths << FILESDIR << FILESDIR "/cfg";
-#endif
-    if (!datadir.isEmpty())
-        searchPaths << datadir << datadir + "/cfg";
     QStringList libs;
     // Search the std.cfg first since other libraries could depend on it
     QString stdLibraryFilename;
-    for (const QString &sp : searchPaths) {
+    for (const QString &sp : projectFile->getSearchPaths("cfg")) {
         QDir dir(sp);
         dir.setSorting(QDir::Name);
         dir.setNameFilters(QStringList("*.cfg"));
@@ -155,7 +163,7 @@ ProjectFileDialog::ProjectFileDialog(ProjectFile *projectFile, bool premium, QWi
             break;
     }
     // Search other libraries
-    for (const QString &sp : searchPaths) {
+    for (const QString &sp : projectFile->getSearchPaths("cfg")) {
         QDir dir(sp);
         dir.setSorting(QDir::Name);
         dir.setNameFilters(QStringList("*.cfg"));
@@ -183,7 +191,7 @@ ProjectFileDialog::ProjectFileDialog(ProjectFile *projectFile, bool premium, QWi
     }
     libs.sort();
     mUI->mLibraries->clear();
-    for (const QString &lib : libs) {
+    for (const QString &lib : utils::as_const(libs)) {
         auto* item = new QListWidgetItem(lib, mUI->mLibraries);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable); // set checkable flag
         item->setCheckState(Qt::Unchecked); // AND initialize check state
@@ -194,18 +202,15 @@ ProjectFileDialog::ProjectFileDialog(ProjectFile *projectFile, bool premium, QWi
     for (const Platform::Type builtinPlatform : builtinPlatforms)
         mUI->mComboBoxPlatform->addItem(platforms.get(builtinPlatform).mTitle);
     QStringList platformFiles;
-    for (QString sp : searchPaths) {
-        if (sp.endsWith("/cfg"))
-            sp = sp.mid(0,sp.length()-3) + "platforms";
+    for (const QString& sp : projectFile->getSearchPaths("platforms")) {
         QDir dir(sp);
         dir.setSorting(QDir::Name);
         dir.setNameFilters(QStringList("*.xml"));
         dir.setFilter(QDir::Files | QDir::NoDotAndDotDot);
         for (const QFileInfo& item : dir.entryInfoList()) {
             const QString platformFile = item.fileName();
-
             Platform plat2;
-            if (!plat2.loadFromFile(applicationFilePath.toStdString().c_str(), platformFile.toStdString()))
+            if (!plat2.loadFromFile({sp.toStdString()}, platformFile.toStdString()))
                 continue;
 
             if (platformFiles.indexOf(platformFile) == -1)
@@ -227,6 +232,7 @@ ProjectFileDialog::ProjectFileDialog(ProjectFile *projectFile, bool premium, QWi
     connect(mUI->mBtnBrowseBuildDir, &QPushButton::clicked, this, &ProjectFileDialog::browseBuildDir);
     connect(mUI->mBtnClearImportProject, &QPushButton::clicked, this, &ProjectFileDialog::clearImportProject);
     connect(mUI->mBtnBrowseImportProject, &QPushButton::clicked, this, &ProjectFileDialog::browseImportProject);
+    connect(mUI->mBtnBrowseUserInclude, &QPushButton::clicked, this, &ProjectFileDialog::browseUserInclude);
     connect(mUI->mBtnAddCheckPath, SIGNAL(clicked()), this, SLOT(addCheckPath()));
     connect(mUI->mBtnEditCheckPath, &QPushButton::clicked, this, &ProjectFileDialog::editCheckPath);
     connect(mUI->mBtnRemoveCheckPath, &QPushButton::clicked, this, &ProjectFileDialog::removeCheckPath);
@@ -295,6 +301,7 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
     setIncludepaths(projectFile->getIncludeDirs());
     setDefines(projectFile->getDefines());
     setUndefines(projectFile->getUndefines());
+    mUI->mEditUserInclude->setText(projectFile->getUserInclude());
     setCheckPaths(projectFile->getCheckPaths());
     setImportProject(projectFile->getImportProject());
     mUI->mChkAllVsConfigs->setChecked(projectFile->getAnalyzeAllVsConfigs());
@@ -306,12 +313,20 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
         else
             item->setCheckState(Qt::Unchecked);
     }
-    if (projectFile->isCheckLevelExhaustive())
-        mUI->mCheckLevelExhaustive->setChecked(true);
-    else
+    switch (projectFile->getCheckLevel()) {
+    case ProjectFile::CheckLevel::reduced:
+        mUI->mCheckLevelReduced->setChecked(true);
+        break;
+    case ProjectFile::CheckLevel::normal:
         mUI->mCheckLevelNormal->setChecked(true);
+        break;
+    case ProjectFile::CheckLevel::exhaustive:
+        mUI->mCheckLevelExhaustive->setChecked(true);
+        break;
+    }
     mUI->mCheckHeaders->setChecked(projectFile->getCheckHeaders());
     mUI->mCheckUnusedTemplates->setChecked(projectFile->getCheckUnusedTemplates());
+    mUI->mInlineSuppressions->setChecked(projectFile->getInlineSuppression());
     mUI->mMaxCtuDepth->setValue(projectFile->getMaxCtuDepth());
     mUI->mMaxTemplateRecursion->setValue(projectFile->getMaxTemplateRecursion());
     if (projectFile->clangParser)
@@ -321,10 +336,10 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
     mUI->mBtnSafeClasses->setChecked(projectFile->safeChecks.classes);
     setExcludedPaths(projectFile->getExcludedPaths());
     setLibraries(projectFile->getLibraries());
-    const QString platform = projectFile->getPlatform();
+    const QString& platform = projectFile->getPlatform();
     if (platform.endsWith(".xml")) {
         int i;
-        for (i = numberOfBuiltinPlatforms; i < mUI->mComboBoxPlatform->count(); ++i) {
+        for (i = builtinPlatforms.size(); i < mUI->mComboBoxPlatform->count(); ++i) {
             if (mUI->mComboBoxPlatform->itemText(i) == platform)
                 break;
         }
@@ -336,12 +351,12 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
         }
     } else {
         int i;
-        for (i = 0; i < numberOfBuiltinPlatforms; ++i) {
+        for (i = 0; i < builtinPlatforms.size(); ++i) {
             const Platform::Type p = builtinPlatforms[i];
             if (platform == Platform::toString(p))
                 break;
         }
-        if (i < numberOfBuiltinPlatforms)
+        if (i < builtinPlatforms.size())
             mUI->mComboBoxPlatform->setCurrentIndex(i);
         else
             mUI->mComboBoxPlatform->setCurrentIndex(-1);
@@ -374,7 +389,11 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
     updateAddonCheckBox(mUI->mAddonY2038, projectFile, dataDir, "y2038");
 
     // Misra checkbox..
-    mUI->mMisraC->setText(mPremium ? "Misra C" : "Misra C 2012");
+    if (mPremium)
+        mUI->mMisraC->setText("Misra C");
+    else {
+        mUI->mMisraC->setText("Misra C 2012  " + tr("Note: Open source Cppcheck does not fully implement Misra C 2012"));
+    }
     updateAddonCheckBox(mUI->mMisraC, projectFile, dataDir, ADDON_MISRA);
     mUI->mMisraVersion->setEnabled(mUI->mMisraC->isChecked());
     connect(mUI->mMisraC, &QCheckBox::toggled, mUI->mMisraVersion, &QComboBox::setEnabled);
@@ -382,7 +401,14 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
     const QString &misraFile = settings.value(SETTINGS_MISRA_FILE, QString()).toString();
     mUI->mEditMisraFile->setText(misraFile);
     mUI->mMisraVersion->setVisible(mPremium);
-    mUI->mMisraVersion->setCurrentIndex(projectFile->getCodingStandards().contains(CODING_STANDARD_MISRA_C_2023));
+    if (projectFile->getCodingStandards().contains(CODING_STANDARD_MISRA_C_2023))
+        mUI->mMisraVersion->setCurrentIndex(1);
+    else if (projectFile->getCodingStandards().contains(CODING_STANDARD_MISRA_C_2025))
+        mUI->mMisraVersion->setCurrentIndex(2);
+    else if (projectFile->getAddons().contains(ADDON_MISRA))
+        mUI->mMisraVersion->setCurrentIndex(0);
+    else
+        mUI->mMisraVersion->setCurrentIndex(-1);
     if (mPremium) {
         mUI->mLabelMisraFile->setVisible(false);
         mUI->mEditMisraFile->setVisible(false);
@@ -393,15 +419,26 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
     }
 
     mUI->mMisraCpp->setEnabled(mPremium);
+    mUI->mMisraCppVersion->setVisible(mPremium);
+    if (projectFile->getCodingStandards().contains(CODING_STANDARD_MISRA_CPP_2008)) {
+        mUI->mMisraCpp->setChecked(true);
+        mUI->mMisraCppVersion->setCurrentIndex(0);
+    }
+    else if (projectFile->getCodingStandards().contains(CODING_STANDARD_MISRA_CPP_2023)) {
+        mUI->mMisraCpp->setChecked(true);
+        mUI->mMisraCppVersion->setCurrentIndex(1);
+    } else {
+        mUI->mMisraCpp->setChecked(false);
+        mUI->mMisraCppVersion->setCurrentIndex(1);
+    }
+
     mUI->mMisraCppVersion->setEnabled(mUI->mMisraCpp->isChecked());
     connect(mUI->mMisraCpp, &QCheckBox::toggled, mUI->mMisraCppVersion, &QComboBox::setEnabled);
-
-    mUI->mMisraCppVersion->setVisible(mPremium);
-    mUI->mMisraCppVersion->setCurrentIndex(projectFile->getCodingStandards().contains(CODING_STANDARD_MISRA_CPP_2023));
 
     mUI->mCertC2016->setChecked(mPremium && projectFile->getCodingStandards().contains(CODING_STANDARD_CERT_C));
     mUI->mCertCpp2016->setChecked(mPremium && projectFile->getCodingStandards().contains(CODING_STANDARD_CERT_CPP));
     mUI->mAutosar->setChecked(mPremium && projectFile->getCodingStandards().contains(CODING_STANDARD_AUTOSAR));
+    mUI->mSafetyProfiles->setChecked(mPremium && projectFile->getCodingStandards().contains(CODING_STANDARD_SAFETY_PROFILES));
 
     if (projectFile->getCertIntPrecision() <= 0)
         mUI->mEditCertIntPrecision->setText(QString());
@@ -411,6 +448,7 @@ void ProjectFileDialog::loadFromProjectFile(const ProjectFile *projectFile)
     mUI->mCertC2016->setEnabled(mPremium);
     mUI->mCertCpp2016->setEnabled(mPremium);
     mUI->mAutosar->setEnabled(mPremium);
+    mUI->mSafetyProfiles->setEnabled(mPremium);
     mUI->mLabelCertIntPrecision->setVisible(mPremium);
     mUI->mEditCertIntPrecision->setVisible(mPremium);
     mUI->mBughunting->setChecked(mPremium && projectFile->getBughunting());
@@ -435,22 +473,29 @@ void ProjectFileDialog::saveToProjectFile(ProjectFile *projectFile) const
     projectFile->setVSConfigurations(getProjectConfigurations());
     projectFile->setCheckHeaders(mUI->mCheckHeaders->isChecked());
     projectFile->setCheckUnusedTemplates(mUI->mCheckUnusedTemplates->isChecked());
+    projectFile->setInlineSuppression(mUI->mInlineSuppressions->isChecked());
     projectFile->setMaxCtuDepth(mUI->mMaxCtuDepth->value());
     projectFile->setMaxTemplateRecursion(mUI->mMaxTemplateRecursion->value());
     projectFile->setIncludes(getIncludePaths());
     projectFile->setDefines(getDefines());
     projectFile->setUndefines(getUndefines());
+    projectFile->setUserInclude(mUI->mEditUserInclude->text());
     projectFile->setCheckPaths(getCheckPaths());
     projectFile->setExcludedPaths(getExcludedPaths());
     projectFile->setLibraries(getLibraries());
-    projectFile->setCheckLevel(mUI->mCheckLevelExhaustive->isChecked() ? ProjectFile::CheckLevel::exhaustive : ProjectFile::CheckLevel::normal);
+    if (mUI->mCheckLevelReduced->isChecked())
+        projectFile->setCheckLevel(ProjectFile::CheckLevel::reduced);
+    else if (mUI->mCheckLevelNormal->isChecked())
+        projectFile->setCheckLevel(ProjectFile::CheckLevel::normal);
+    else // if (mUI->mCheckLevelExhaustive->isChecked())
+        projectFile->setCheckLevel(ProjectFile::CheckLevel::exhaustive);
     projectFile->clangParser = mUI->mBtnClangParser->isChecked();
     projectFile->safeChecks.classes = mUI->mBtnSafeClasses->isChecked();
     if (mUI->mComboBoxPlatform->currentText().endsWith(".xml"))
         projectFile->setPlatform(mUI->mComboBoxPlatform->currentText());
     else {
         const int i = mUI->mComboBoxPlatform->currentIndex();
-        if (i>=0 && i < numberOfBuiltinPlatforms)
+        if (i>=0 && i < builtinPlatforms.size())
             projectFile->setPlatform(Platform::toString(builtinPlatforms[i]));
         else
             projectFile->setPlatform(QString());
@@ -488,22 +533,22 @@ void ProjectFileDialog::saveToProjectFile(ProjectFile *projectFile) const
         codingStandards << CODING_STANDARD_CERT_CPP;
     if (mPremium && mUI->mMisraVersion->currentIndex() == 1)
         codingStandards << CODING_STANDARD_MISRA_C_2023;
+    if (mPremium && mUI->mMisraVersion->currentIndex() == 2)
+        codingStandards << CODING_STANDARD_MISRA_C_2025;
     if (mUI->mMisraCpp->isChecked() && mUI->mMisraCppVersion->currentIndex() == 0)
         codingStandards << CODING_STANDARD_MISRA_CPP_2008;
     if (mUI->mMisraCpp->isChecked() && mUI->mMisraCppVersion->currentIndex() == 1)
         codingStandards << CODING_STANDARD_MISRA_CPP_2023;
     if (mUI->mAutosar->isChecked())
         codingStandards << CODING_STANDARD_AUTOSAR;
+    if (mUI->mSafetyProfiles->isChecked())
+        codingStandards << CODING_STANDARD_SAFETY_PROFILES;
     projectFile->setCodingStandards(std::move(codingStandards));
     projectFile->setCertIntPrecision(mUI->mEditCertIntPrecision->text().toInt());
     projectFile->setBughunting(mUI->mBughunting->isChecked());
     projectFile->setClangAnalyzer(mUI->mToolClangAnalyzer->isChecked());
     projectFile->setClangTidy(mUI->mToolClangTidy->isChecked());
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
     projectFile->setTags(mUI->mEditTags->text().split(";", Qt::SkipEmptyParts));
-#else
-    projectFile->setTags(mUI->mEditTags->text().split(";", QString::SkipEmptyParts));
-#endif
 }
 
 void ProjectFileDialog::ok()
@@ -516,20 +561,17 @@ void ProjectFileDialog::ok()
 QString ProjectFileDialog::getExistingDirectory(const QString &caption, bool trailingSlash)
 {
     const QFileInfo inf(mProjectFile->getFilename());
-    const QString rootpath = inf.absolutePath();
+    const QString projectPath = inf.absolutePath();
     QString selectedDir = QFileDialog::getExistingDirectory(this,
                                                             caption,
-                                                            rootpath);
+                                                            projectPath);
 
     if (selectedDir.isEmpty())
         return QString();
 
     // Check if the path is relative to project file's path and if so
     // make it a relative path instead of absolute path.
-    const QDir dir(rootpath);
-    const QString relpath(dir.relativeFilePath(selectedDir));
-    if (!relpath.startsWith("../.."))
-        selectedDir = relpath;
+    selectedDir = mProjectFile->getRelativePath(selectedDir);
 
     // Trailing slash..
     if (trailingSlash && !selectedDir.endsWith('/'))
@@ -549,14 +591,13 @@ void ProjectFileDialog::updatePathsAndDefines()
 {
     const QString &fileName = mUI->mEditImportProject->text();
     const bool importProject = !fileName.isEmpty();
-    const bool hasConfigs = fileName.endsWith(".sln") || fileName.endsWith(".vcxproj");
+    const bool hasConfigs = fileName.endsWith(".sln") || fileName.endsWith(".slnx") || fileName.endsWith(".vcxproj");
     mUI->mBtnClearImportProject->setEnabled(importProject);
     mUI->mListCheckPaths->setEnabled(!importProject);
     mUI->mListIncludeDirs->setEnabled(!importProject);
     mUI->mBtnAddCheckPath->setEnabled(!importProject);
     mUI->mBtnEditCheckPath->setEnabled(!importProject);
     mUI->mBtnRemoveCheckPath->setEnabled(!importProject);
-    mUI->mEditDefines->setEnabled(!importProject);
     mUI->mEditUndefines->setEnabled(!importProject);
     mUI->mBtnAddInclude->setEnabled(!importProject);
     mUI->mBtnEditInclude->setEnabled(!importProject);
@@ -580,20 +621,35 @@ void ProjectFileDialog::browseImportProject()
     const QFileInfo inf(mProjectFile->getFilename());
     const QDir &dir = inf.absoluteDir();
     QMap<QString,QString> filters;
-    filters[tr("Visual Studio")] = "*.sln *.vcxproj";
+    filters["Visual Studio"] = "*.sln *.slnx *.vcxproj";
     filters[tr("Compile database")] = "compile_commands.json";
-    filters[tr("Borland C++ Builder 6")] = "*.bpr";
+    filters["Borland C++ Builder 6"] = "*.bpr";
     QString fileName = QFileDialog::getOpenFileName(this, tr("Import Project"),
                                                     dir.canonicalPath(),
                                                     toFilterString(filters));
     if (!fileName.isEmpty()) {
-        mUI->mEditImportProject->setText(dir.relativeFilePath(fileName));
+        mUI->mEditImportProject->setText(mProjectFile->getRelativePath(fileName));
         updatePathsAndDefines();
         setProjectConfigurations(getProjectConfigs(fileName));
         for (int row = 0; row < mUI->mListVsConfigs->count(); ++row) {
             QListWidgetItem *item = mUI->mListVsConfigs->item(row);
             item->setCheckState(Qt::Checked);
         }
+    }
+}
+
+void ProjectFileDialog::browseUserInclude()
+{
+    const QFileInfo inf(mProjectFile->getFilename());
+    const QDir &dir = inf.absoluteDir();
+    QMap<QString,QString> filters;
+    filters[tr("C/C++ header")] = "*.h";
+    filters[tr("All files")] = "*.*";
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Include file"),
+                                                    dir.canonicalPath(),
+                                                    toFilterString(filters));
+    if (!fileName.isEmpty()) {
+        mUI->mEditUserInclude->setText(mProjectFile->getRelativePath(fileName));
     }
 }
 
@@ -677,21 +733,13 @@ QStringList ProjectFileDialog::getIncludePaths() const
 
 QStringList ProjectFileDialog::getDefines() const
 {
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
     return mUI->mEditDefines->text().trimmed().split(QRegularExpression("\\s*;\\s*"), Qt::SkipEmptyParts);
-#else
-    return mUI->mEditDefines->text().trimmed().split(QRegularExpression("\\s*;\\s*"), QString::SkipEmptyParts);
-#endif
 }
 
 QStringList ProjectFileDialog::getUndefines() const
 {
     const QString undefine = mUI->mEditUndefines->text().trimmed();
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
     QStringList undefines = undefine.split(QRegularExpression("\\s*;\\s*"), Qt::SkipEmptyParts);
-#else
-    QStringList undefines = undefine.split(QRegularExpression("\\s*;\\s*"), QString::SkipEmptyParts);
-#endif
     undefines.removeDuplicates();
     return undefines;
 }
@@ -774,7 +822,7 @@ void ProjectFileDialog::setLibraries(const QStringList &libraries)
 void ProjectFileDialog::addSingleSuppression(const SuppressionList::Suppression &suppression)
 {
     mSuppressions += suppression;
-    mUI->mListSuppressions->addItem(QString::fromStdString(suppression.getText()));
+    mUI->mListSuppressions->addItem(QString::fromStdString(suppressionAsText(suppression)));
 }
 
 void ProjectFileDialog::setSuppressions(const QList<SuppressionList::Suppression> &suppressions)
@@ -840,7 +888,9 @@ void ProjectFileDialog::addExcludeFile()
     QMap<QString,QString> filters;
     filters[tr("Source files")] = "*.c *.cpp";
     filters[tr("All files")] = "*.*";
-    addExcludePath(QFileDialog::getOpenFileName(this, tr("Exclude file"), dir.canonicalPath(), toFilterString(filters)));
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Exclude file"), dir.canonicalPath(), toFilterString(filters));
+    if (!fileName.isEmpty())
+        addExcludePath(mProjectFile->getRelativePath(fileName));
 }
 
 void ProjectFileDialog::editExcludePath()
@@ -914,11 +964,10 @@ void ProjectFileDialog::editSuppression(const QModelIndex & /*index*/)
 int ProjectFileDialog::getSuppressionIndex(const QString &shortText) const
 {
     const std::string s = shortText.toStdString();
-    for (int i = 0; i < mSuppressions.size(); ++i) {
-        if (mSuppressions[i].getText() == s)
-            return i;
-    }
-    return -1;
+    auto it = std::find_if(mSuppressions.cbegin(), mSuppressions.cend(), [&](const SuppressionList::Suppression& sup) {
+        return suppressionAsText(sup) == s;
+    });
+    return it == mSuppressions.cend() ? -1 : static_cast<int>(std::distance(mSuppressions.cbegin(), it));
 }
 
 void ProjectFileDialog::browseMisraFile()
